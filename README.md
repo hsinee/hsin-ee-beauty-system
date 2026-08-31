@@ -1,12 +1,18 @@
-# HSIN-EE Studio System V4
+# HSIN-EE Studio System V5
 
-V4 is packaged from the uploaded JSX application.
+Vite + React version prepared for Vercel deployment.
 
-## Local preview
-1. Install Node.js.
-2. Open this folder in Terminal / PowerShell.
-3. Run `npm install`
-4. Run `npm run dev`
+## V5 fixes
+- Added the missing browser entry point (`src/main.jsx`).
+- Added Vite configuration.
+- Changed storage to use `localStorage` when `window.storage` is unavailable, while keeping compatibility with environments that provide `window.storage`.
+- Added a React Error Boundary so runtime errors no longer silently appear as a blank page.
 
-## Vercel / GitHub
-The project is a Vite + React app. The main application file is `App.jsx`.
+## Deploy
+1. Upload this folder to GitHub.
+2. Import the repository into Vercel.
+3. Framework Preset: Vite.
+4. Build Command: `npm run build`.
+5. Output Directory: `dist`.
+
+No environment variables are required by this current source file.

@@ -185,35 +185,30 @@ async function copyToClipboard(text) {
 
 async function loadData() {
   try {
-    // 保留原本沙盒環境的 window.storage；一般 Vercel / 瀏覽器則使用 localStorage。
+    // Claude/Artifacts 可能提供 window.storage；Vercel/一般瀏覽器則使用 localStorage。
     if (window.storage?.get) {
       const res = await window.storage.get(STORAGE_KEY);
       if (res && res.value) return JSON.parse(res.value);
+    } else {
+      const value = window.localStorage.getItem(STORAGE_KEY);
+      if (value) return JSON.parse(value);
     }
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    return null;
   } catch (e) {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (_) {
-      return null;
-    }
+    console.error('load storage error', e);
+    return null;
   }
 }
 async function persist(data) {
   try {
-    const serialized = JSON.stringify(data);
+    const value = JSON.stringify(data);
     if (window.storage?.set) {
-      await window.storage.set(STORAGE_KEY, serialized);
+      await window.storage.set(STORAGE_KEY, value);
+    } else {
+      window.localStorage.setItem(STORAGE_KEY, value);
     }
-    window.localStorage.setItem(STORAGE_KEY, serialized);
   } catch (e) {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch (_) {
-      console.error('storage error', e);
-    }
+    console.error('storage error', e);
   }
 }
 
@@ -278,6 +273,13 @@ function CopyFallbackModal({ text, onClose }) {
    共用統計計算
    ============================================================ */
 
+function addonsTotal(record) {
+  return (record.addons || []).reduce((s, a) => s + Number(a.amount || 0), 0);
+}
+function recordTotal(record) {
+  return Number(record.amount || 0) + addonsTotal(record);
+}
+
 function computeCoreStats(data, range) {
   const { records, expenses } = data;
   const inRange = records.filter((r) => r.date >= range.start && r.date <= range.end);
@@ -296,7 +298,7 @@ function computeCoreStats(data, range) {
     else returningVisits += 1;
   });
 
-  const revenue = inRange.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const revenue = inRange.reduce((s, r) => s + recordTotal(r), 0);
   const visits = inRange.length;
   const avgTicket = visits ? revenue / visits : 0;
 
@@ -426,15 +428,20 @@ function Dashboard({ data }) {
     const trendMap = {};
     inRange.forEach((r) => {
       const key = groupByMonth ? monthKey(r.date) : r.date;
-      trendMap[key] = (trendMap[key] || 0) + Number(r.amount || 0);
+      trendMap[key] = (trendMap[key] || 0) + recordTotal(r);
     });
     const trend = Object.entries(trendMap)
       .sort((a, b) => (a[0] < b[0] ? -1 : 1))
       .map(([k, v]) => ({ label: groupByMonth ? k.slice(2) : k.slice(5), value: v }));
 
-    // 服務項目營收
+    // 服務項目營收（加購／商品另外歸成一類，讓總額跟營收對得起來）
     const serviceMap = {};
-    inRange.forEach((r) => { serviceMap[r.serviceName] = (serviceMap[r.serviceName] || 0) + Number(r.amount || 0); });
+    let addonRevenue = 0;
+    inRange.forEach((r) => {
+      serviceMap[r.serviceName] = (serviceMap[r.serviceName] || 0) + Number(r.amount || 0);
+      addonRevenue += addonsTotal(r);
+    });
+    if (addonRevenue > 0) serviceMap['加購／商品'] = addonRevenue;
     const serviceRevenue = Object.entries(serviceMap)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8)
@@ -643,7 +650,7 @@ function EmptyHint({ text }) {
 
 function customerSummary(customer, records) {
   const own = records.filter((r) => r.customerId === customer.id).sort((a, b) => (a.date < b.date ? -1 : 1));
-  const total = own.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const total = own.reduce((s, r) => s + recordTotal(r), 0);
   const last = own.length ? own[own.length - 1] : null;
   const first = own.length ? own[0] : null;
   return { own, total, count: own.length, last, first };
@@ -696,8 +703,12 @@ function exportAllCustomerData(data) {
         價格方案: r.priceTier === 'trial' ? '首次體驗價' : r.priceTier === 'brand' ? '品牌體驗價' : '原價',
         原價: r.listPrice,
         折扣: r.discount || 0,
-        實收金額: r.amount,
+        服務金額: r.amount,
+        加購項目: (r.addons || []).map((a) => `${a.type}${a.description ? '(' + a.description + ')' : ''} $${a.amount}`).join('、'),
+        加購金額: addonsTotal(r),
+        總金額: recordTotal(r),
         付款方式: r.paymentMethod,
+        已收訂金: r.depositPaid ? `是（$${r.depositAmount || 0}）` : '否',
         客源: r.source || '',
         備註: r.notes || '',
       };
@@ -1017,14 +1028,18 @@ function CustomerDetail({ data, customerId, onBack, onAddRecord, onEditRecord, o
                       </span>
                     )}
                   </span>
-                  <span className="strong">{fmtMoney(r.amount)}</span>
+                  <span className="strong">{fmtMoney(recordTotal(r))}</span>
                 </div>
+                {r.addons && r.addons.length > 0 && (
+                  <div className="muted small">加購：{r.addons.map((a) => `${a.type}${a.description ? '(' + a.description + ')' : ''} ${fmtMoney(a.amount)}`).join('、')}</div>
+                )}
                 <div className="muted small">
                   付款：{r.paymentMethod}
                   {r.discount ? ` ・ 折扣：${fmtMoney(r.discount)}（原價 ${fmtMoney(r.listPrice)}）` : ''}
                   {r.source ? ` ・ 來源：${r.source}` : ''}
                   {r.notes ? ` ・ 備註：${r.notes}` : ''}
                 </div>
+                {r.depositPaid && <span className="tag tag-deposit">已收訂金 {fmtMoney(r.depositAmount || 0)}</span>}
               </div>
               <div className="timeline-actions">
                 <button className="icon-btn ghost" onClick={() => onEditRecord(r)}><Pencil size={14} /></button>
@@ -1144,8 +1159,12 @@ function AppointmentCardItem({ a, isCopied, onCopy, onToggleReminded, onDelete, 
       <div className="appointment-main">
         <button className="text-link strong" onClick={() => onOpenCustomer(a.customerId)}>{a.customer.name}</button>
         <span className="muted small"> {a.customer.phone}{a.customer.lineId ? ` ・ LINE ${a.customer.lineId}` : ''}</span>
-        {a.serviceName && <div className="muted small">{a.serviceName}{a.source === 'record' ? ` ・ ${fmtMoney(a.amount)}` : ''}</div>}
+        {a.serviceName && <div className="muted small">{a.serviceName}{a.source === 'record' ? ` ・ ${fmtMoney(recordTotal(a))}` : ''}</div>}
+        {a.source === 'record' && a.addons && a.addons.length > 0 && (
+          <div className="muted small">加購：{a.addons.map((x) => x.type).join('、')}</div>
+        )}
         {a.notes && <div className="muted small">備註：{a.notes}</div>}
+        {a.source === 'record' && a.depositPaid && <span className="tag tag-deposit">已收訂金 {fmtMoney(a.depositAmount || 0)}</span>}
       </div>
       <div className="appointment-actions">
         {upcoming ? (
@@ -1403,7 +1422,7 @@ function CustomerQuickPreview({ customer, records }) {
             <li key={r.id}>
               <span className="muted small">{fmtDate(r.date)}</span>
               <span className="small">{r.serviceName}</span>
-              <span className="muted small">{fmtMoney(r.amount)}</span>
+              <span className="muted small">{fmtMoney(recordTotal(r))}</span>
             </li>
           ))}
         </ul>
@@ -1411,6 +1430,8 @@ function CustomerQuickPreview({ customer, records }) {
     </div>
   );
 }
+
+const ADDON_TYPES = ['敷膜', '面膜', '購買產品', '其他'];
 
 function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQuickAddCustomer }) {
   const isEditing = !!record;
@@ -1430,6 +1451,9 @@ function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQu
   const [paymentMethod, setPaymentMethod] = useState((record && record.paymentMethod) || PAYMENT_METHODS[0]);
   const [source, setSource] = useState((record && record.source) || '回訪');
   const [notes, setNotes] = useState((record && record.notes) || '');
+  const [addons, setAddons] = useState((record && record.addons) || []);
+  const [depositPaid, setDepositPaid] = useState(record ? !!record.depositPaid : false);
+  const [depositAmount, setDepositAmount] = useState(record && record.depositAmount ? String(record.depositAmount) : '');
 
   const activeServices = data.services.filter((s) => s.active);
   const selectedService = activeServices.find((s) => s.id === serviceId);
@@ -1468,14 +1492,30 @@ function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQu
   const custMatches = useMemo(() => {
     const term = customerQuery.trim().toLowerCase();
     if (!term) return [];
-    return data.customers.filter((c) => c.name.toLowerCase().includes(term) || (c.phone || '').includes(term)).slice(0, 6);
+    return data.customers.filter((c) =>
+      c.name.toLowerCase().includes(term) ||
+      (c.phone || '').includes(term) ||
+      (c.memberNo || '').toLowerCase().includes(term)
+    ).slice(0, 6);
   }, [customerQuery, data.customers]);
 
   const chosenCustomer = data.customers.find((c) => c.id === customerId);
 
   const selectService = (id) => setServiceId(id);
 
+  const addAddonLine = () => {
+    setAddons([...addons, { id: uid(), type: ADDON_TYPES[0], description: '', amount: '' }]);
+  };
+  const updateAddonLine = (id, field, value) => {
+    setAddons(addons.map((a) => (a.id === id ? { ...a, [field]: value } : a)));
+  };
+  const removeAddonLine = (id) => {
+    setAddons(addons.filter((a) => a.id !== id));
+  };
+  const addonSum = addons.reduce((s, a) => s + Number(a.amount || 0), 0);
+
   const finalAmount = Math.max(0, Number(listPrice || 0) - (hasDiscount ? Number(discountAmount || 0) : 0));
+  const grandTotal = finalAmount + addonSum;
 
   const canSubmit = customerId && serviceId && listPrice !== '';
 
@@ -1492,6 +1532,11 @@ function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQu
       priceTier,
       discount: hasDiscount ? Number(discountAmount || 0) : 0,
       amount: finalAmount,
+      addons: addons
+        .filter((a) => a.amount !== '' && Number(a.amount) > 0)
+        .map((a) => ({ id: a.id, type: a.type, description: a.description.trim(), amount: Number(a.amount) })),
+      depositPaid,
+      depositAmount: depositPaid ? Number(depositAmount || 0) : 0,
       paymentMethod,
       source: isFirstTime ? source : '回訪',
       notes: notes.trim(),
@@ -1522,7 +1567,7 @@ function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQu
         ) : (
           <>
             <input
-              placeholder="輸入姓名或電話搜尋"
+              placeholder="輸入姓名、電話或會員編號搜尋"
               value={customerQuery}
               onChange={(e) => setCustomerQuery(e.target.value)}
               autoFocus
@@ -1534,7 +1579,7 @@ function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQu
                     key={c.id}
                     onMouseDown={(e) => { e.preventDefault(); setCustomerId(c.id); setCustomerQuery(''); }}
                   >
-                    <span className="strong">{c.name}</span> <span className="muted small">{c.phone}</span>
+                    <span className="strong">{c.name}</span> <span className="muted small">{c.memberNo} ・ {c.phone}</span>
                   </li>
                 ))}
               </ul>
@@ -1611,10 +1656,43 @@ function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQu
         </Field>
       )}
 
-      <div className="final-amount-row">
-        <span className="muted">實收金額（自動計算）</span>
-        <span className="strong">{fmtMoney(finalAmount)}</span>
+      <div className="addon-section">
+        <div className="addon-header">
+          <span className="field-label">加購項目（敷膜／面膜／購買產品等）</span>
+          <button type="button" className="text-link" onClick={addAddonLine}>+ 新增加購</button>
+        </div>
+        {addons.length > 0 && (
+          <div className="addon-list">
+            {addons.map((a) => (
+              <div className="addon-row" key={a.id}>
+                <select value={a.type} onChange={(e) => updateAddonLine(a.id, 'type', e.target.value)}>
+                  {ADDON_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <input placeholder="說明（選填）" value={a.description} onChange={(e) => updateAddonLine(a.id, 'description', e.target.value)} />
+                <input type="number" placeholder="金額" value={a.amount} onChange={(e) => updateAddonLine(a.id, 'amount', e.target.value)} />
+                <button type="button" className="icon-btn ghost" onClick={() => removeAddonLine(a.id)}><X size={14} /></button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      <div className="final-amount-row breakdown">
+        <div className="final-amount-line"><span className="muted">服務金額</span><span>{fmtMoney(finalAmount)}</span></div>
+        {addonSum > 0 && <div className="final-amount-line"><span className="muted">加購金額</span><span>{fmtMoney(addonSum)}</span></div>}
+        <div className="final-amount-line total"><span className="strong">總金額</span><span className="strong">{fmtMoney(grandTotal)}</span></div>
+      </div>
+
+      <label className="checkbox-row">
+        <input type="checkbox" checked={depositPaid} onChange={(e) => setDepositPaid(e.target.checked)} />
+        已收訂金
+      </label>
+
+      {depositPaid && (
+        <Field label="訂金金額" hint="選填，沒填金額也會標示已收訂金">
+          <input type="number" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} placeholder="0" />
+        </Field>
+      )}
 
       {isFirstTime && (
         <Field label="客戶來源" hint="這是這位客人的第一筆消費">
@@ -2149,6 +2227,15 @@ export default function App() {
         .kpi-value.small { font-family: 'Noto Serif TC', serif; font-size: 17px; font-weight: 600; }
 
         .final-amount-row { display: flex; justify-content: space-between; align-items: center; background: var(--beige); border-radius: 6px; padding: 10px 14px; font-size: 14px; }
+        .final-amount-row.breakdown { flex-direction: column; align-items: stretch; gap: 4px; }
+        .final-amount-line { display: flex; justify-content: space-between; font-size: 13px; }
+        .final-amount-line.total { padding-top: 6px; margin-top: 2px; border-top: 1px solid var(--line); font-size: 15px; }
+
+        .addon-section { display: flex; flex-direction: column; gap: 8px; }
+        .addon-header { display: flex; justify-content: space-between; align-items: center; }
+        .addon-list { display: flex; flex-direction: column; gap: 8px; }
+        .addon-row { display: grid; grid-template-columns: 100px 1fr 90px auto; gap: 6px; align-items: center; }
+        .addon-row select, .addon-row input { font-family: inherit; font-size: 13px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--white); color: var(--brown); }
 
         .revisit-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
         .revisit-card { display: flex; align-items: center; gap: 20px; background: var(--white); border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; flex-wrap: wrap; }
@@ -2176,6 +2263,7 @@ export default function App() {
         .tag-photo-no { background: #F3E1DE; color: var(--alert); }
         .tag-model-active { background: var(--beige); color: var(--rose-deep); font-weight: 600; }
         .tag-model-inactive { background: #EFEFEF; color: var(--taupe); }
+        .tag-deposit { display: inline-block; margin-top: 6px; background: #E5EEE3; color: #5A7A54; }
         .notes-text { font-size: 13px; line-height: 1.6; margin: 0; white-space: pre-wrap; }
 
         .tier-tag { display: inline-block; font-size: 10px; font-weight: 500; padding: 2px 7px; border-radius: 20px; margin-left: 8px; vertical-align: middle; }
@@ -2301,6 +2389,11 @@ export default function App() {
           .month-cell { padding: 4px; min-height: 58px; }
           .month-cell-chip { font-size: 9px; }
           .view-head { align-items: flex-start; }
+          .addon-row { grid-template-columns: 1fr 1fr; grid-template-areas: "type amount" "desc desc"; }
+          .addon-row select { grid-area: type; }
+          .addon-row input[type="number"] { grid-area: amount; }
+          .addon-row input:not([type="number"]) { grid-area: desc; }
+          .addon-row .icon-btn { grid-column: 1 / -1; justify-self: end; }
         }
       `}</style>
 
