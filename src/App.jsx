@@ -2085,15 +2085,15 @@ export default function App() {
         @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;500;600;700&family=Noto+Sans+TC:wght@300;400;500;600;700&display=swap');
 
         .app-root {
-          --cream: #FBF7F2;
-          --beige: #F3EAE0;
-          --rose: #C99A93;
-          --rose-deep: #B98077;
-          --brown: #4A3B32;
-          --taupe: #9C8D82;
-          --line: #E4DCD2;
-          --white: #FFFFFF;
-          --alert: #B15C52;
+         --cream: #f1ebe5;
+--beige: #f1ebe5;
+--rose: #d4a396;
+--rose-deep: #c58f82;
+--brown: #4a3b34;
+--taupe: #8f8178;
+--line: #ded4cc;
+--white: #ffffff;
+--alert: #b56f65;
 
           font-family: 'Noto Sans TC', sans-serif;
           color: var(--brown);
