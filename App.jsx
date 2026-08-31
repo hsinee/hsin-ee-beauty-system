@@ -1967,9 +1967,30 @@ const handleAddRecord = (record) => {
   setAddRecordFor(null);
 };
 
-  const handleDeleteRecord = (id) => {
-    updateData((d) => { d.records = d.records.filter((r) => r.id !== id); });
-  };
+ const handleDeleteRecord = (id) => {
+  updateData((d) => {
+    const deletedRecord = d.records.find((r) => r.id === id);
+    const records = d.records.filter((r) => r.id !== id);
+
+    if (deletedRecord?.customerId) {
+      const customerRecords = records.filter(
+        (r) => r.customerId === deletedRecord.customerId && r.date
+      );
+
+      const firstVisitDate = customerRecords
+        .map((r) => r.date)
+        .sort()[0] || "";
+
+      d.customers = d.customers.map((c) =>
+        c.id === deletedRecord.customerId
+          ? { ...c, firstVisitDate }
+          : c
+      );
+    }
+
+    d.records = records;
+  });
+};
 
   const handleToggleRecordReminded = (id, mark) => {
     updateData((d) => {
