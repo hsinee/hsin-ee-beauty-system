@@ -2002,14 +2002,30 @@ const handleAddRecord = (record) => {
 
   // 舊版預約資料（appointments）僅保留刪除與標記已提醒，供舊資料相容顯示；
   // 新增服務／預約一律走 handleAddRecord 統一表單。
-  const handleDeleteAppointment = (id) => {
-    updateData((d) => { d.appointments = d.appointments.filter((a) => a.id !== id); });
-  };
-  const handleToggleAppointmentReminded = (id, mark) => {
-    updateData((d) => {
-      d.appointments = d.appointments.map((a) => a.id === id ? { ...a, reminderSent: mark } : a);
-    });
-  };
+  const handleDeleteRecord = (id) => {
+  updateData((d) => {
+    const deletedRecord = d.records.find((r) => r.id === id);
+    const records = d.records.filter((r) => r.id !== id);
+
+    if (deletedRecord?.customerId) {
+      const customerRecords = records.filter(
+        (r) => r.customerId === deletedRecord.customerId && r.date
+      );
+
+      const firstVisitDate = customerRecords
+        .map((r) => r.date)
+        .sort()[0] || '';
+
+      d.customers = d.customers.map((c) =>
+        c.id === deletedRecord.customerId
+          ? { ...c, firstVisitDate }
+          : c
+      );
+    }
+
+    d.records = records;
+  });
+};
 
   const goto = (id) => { setView(id); setMobileNavOpen(false); };
 
