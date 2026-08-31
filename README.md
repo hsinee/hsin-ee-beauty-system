@@ -1,20 +1,12 @@
-# HSIN-EE Studio System V3
+# HSIN-EE Studio System V4
 
-Vite + React version of the uploaded JSX.
+V4 is packaged from the uploaded JSX application.
 
-## Run locally
+## Local preview
+1. Install Node.js.
+2. Open this folder in Terminal / PowerShell.
+3. Run `npm install`
+4. Run `npm run dev`
 
-```bash
-npm install
-npm run dev
-```
-
-## Build
-
-```bash
-npm run build
-```
-
-## Data storage
-
-V3 keeps the existing `hsin-ee-studio-data-v1` key and supports the original `window.storage` environment when available, with browser `localStorage` as the fallback for normal Vercel/browser deployment.
+## Vercel / GitHub
+The project is a Vite + React app. The main application file is `App.jsx`.
