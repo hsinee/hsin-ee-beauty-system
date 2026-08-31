@@ -8,6 +8,7 @@ import {
   Users, LayoutGrid, Sparkles, Wallet, ClipboardList, Menu, CalendarDays, Clock, Download
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { supabase } from './supabase';
 
 /* ============================================================
    常數 / 預設值
@@ -180,20 +181,34 @@ async function copyToClipboard(text) {
    儲存
    ============================================================ */
 
-async function loadData() {
+async function loadData(userId) {
+  if (!userId) return null;
   try {
-    const res = await window.storage.get(STORAGE_KEY);
-    if (res && res.value) return JSON.parse(res.value);
-    return null;
+    const { data: row, error } = await supabase
+      .from('app_state')
+      .select('data')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error) throw error;
+    return row?.data || null;
   } catch (e) {
+    console.error('load data error', e);
     return null;
   }
 }
-async function persist(data) {
+async function persist(userId, data) {
+  if (!userId) return;
   try {
-    await window.storage.set(STORAGE_KEY, JSON.stringify(data));
+    const { error } = await supabase
+      .from('app_state')
+      .upsert({
+        user_id: userId,
+        data,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' });
+    if (error) throw error;
   } catch (e) {
-    console.error('storage error', e);
+    console.error('cloud storage error', e);
   }
 }
 
@@ -1878,7 +1893,43 @@ const NAV = [
   { id: 'expenses', label: '成本', icon: Wallet },
 ];
 
+function LoginScreen({ onLogin }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setBusy(true);
+    const { error: loginError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    if (loginError) setError('Email 或密碼不正確，請再試一次。');
+    else onLogin?.();
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#FBF7F2', display: 'grid', placeItems: 'center', padding: 24, fontFamily: 'Noto Sans TC, sans-serif', color: '#4A3B32' }}>
+      <form onSubmit={submit} style={{ width: '100%', maxWidth: 420, background: '#fff', border: '1px solid #E4DCD2', borderRadius: 16, padding: 32, boxShadow: '0 12px 40px rgba(74,59,50,.08)' }}>
+        <div style={{ fontFamily: 'Noto Serif TC, serif', fontSize: 26, fontWeight: 600, letterSpacing: '.08em' }}>HSIN.EE</div>
+        <div style={{ color: '#9C8D82', marginTop: 4, marginBottom: 28, fontSize: 13 }}>Beauty System｜管理後台</div>
+        <label style={{ display: 'block', fontSize: 13, marginBottom: 8 }}>Email</label>
+        <input value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="email" required placeholder="你的登入 Email" style={{ width: '100%', padding: '12px 13px', border: '1px solid #E4DCD2', borderRadius: 8, marginBottom: 16, fontSize: 14, boxSizing: 'border-box' }} />
+        <label style={{ display: 'block', fontSize: 13, marginBottom: 8 }}>密碼</label>
+        <input value={password} onChange={e => setPassword(e.target.value)} type="password" autoComplete="current-password" required placeholder="你的密碼" style={{ width: '100%', padding: '12px 13px', border: '1px solid #E4DCD2', borderRadius: 8, marginBottom: 16, fontSize: 14, boxSizing: 'border-box' }} />
+        {error && <div style={{ color: '#B15C52', background: '#FBF0EE', padding: '10px 12px', borderRadius: 8, fontSize: 13, marginBottom: 16 }}>{error}</div>}
+        <button disabled={busy} type="submit" style={{ width: '100%', border: 0, borderRadius: 8, padding: '12px 16px', background: '#B98077', color: '#fff', fontSize: 14, cursor: busy ? 'wait' : 'pointer', opacity: busy ? .7 : 1 }}>
+          {busy ? '登入中⋯' : '登入系統'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export default function App() {
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('dashboard');
@@ -1889,18 +1940,44 @@ export default function App() {
   const initialized = useRef(false);
 
   useEffect(() => {
+    let active = true;
     (async () => {
-      const loaded = await loadData();
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (!active) return;
+      setSession(currentSession);
+      setAuthLoading(false);
+    })();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      if (!nextSession) {
+        setData(null);
+        setLoading(false);
+        initialized.current = false;
+      }
+    });
+    return () => { active = false; subscription.unsubscribe(); };
+  }, []);
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    let active = true;
+    setLoading(true);
+    initialized.current = false;
+    (async () => {
+      const loaded = await loadData(session.user.id);
+      if (!active) return;
       setData(loaded ? { ...emptyData(), ...loaded, appointments: loaded.appointments || [] } : emptyData());
       setLoading(false);
       initialized.current = true;
     })();
-  }, []);
+    return () => { active = false; };
+  }, [session?.user?.id]);
 
   useEffect(() => {
-    if (!initialized.current || !data) return;
-    persist(data);
-  }, [data]);
+    if (!initialized.current || !data || !session?.user?.id) return;
+    persist(session.user.id, data);
+  }, [data, session?.user?.id]);
 
   const updateData = useCallback((mutator) => {
     setData((prev) => {
@@ -1910,8 +1987,16 @@ export default function App() {
     });
   }, []);
 
+  if (authLoading) {
+    return <div className="loading-screen">驗證登入狀態⋯</div>;
+  }
+
+  if (!session) {
+    return <LoginScreen />;
+  }
+
   if (loading || !data) {
-    return <div className="loading-screen">載入中⋯</div>;
+    return <div className="loading-screen">載入雲端資料⋯</div>;
   }
 
   const openCustomer = (id) => { setSelectedCustomerId(id); setView('customerDetail'); };
