@@ -1943,10 +1943,29 @@ export default function App() {
     return cust;
   };
 
-  const handleAddRecord = (record) => {
-    updateData((d) => { d.records = [...d.records, record]; });
-    setAddRecordFor(null);
-  };
+const handleAddRecord = (record) => {
+  updateData((d) => {
+    const records = [...d.records, record];
+
+    const customerRecords = records.filter(
+      (r) => r.customerId === record.customerId && r.date
+    );
+
+    const firstVisitDate = customerRecords
+      .map((r) => r.date)
+      .sort()[0] || '';
+
+    d.records = records;
+
+    d.customers = d.customers.map((c) =>
+      c.id === record.customerId
+        ? { ...c, firstVisitDate }
+        : c
+    );
+  });
+
+  setAddRecordFor(null);
+};
 
   const handleDeleteRecord = (id) => {
     updateData((d) => { d.records = d.records.filter((r) => r.id !== id); });
