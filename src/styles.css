@@ -1,2 +1,4 @@
-/* Styles are currently embedded in App.jsx. This file is intentionally kept
-   for future shared styles and for a conventional Vite project structure. */
+html, body, #root { min-height: 100%; margin: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif; }
+* { box-sizing: border-box; }
+button, input, select, textarea { font: inherit; }

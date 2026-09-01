@@ -1,14 +1,18 @@
-# HSIN.EE Studio System V5
+# Hsin-ee Studio System V6
 
-這是由提供的 JSX 程式整理成可直接放進 GitHub / Vercel 的 Vite + React 專案。
+This package wraps the uploaded React JSX into a Vite project for local development or deployment to Vercel/Netlify.
 
-## 本機啟動
+## Run locally
+
 ```bash
 npm install
 npm run dev
 ```
 
-## 建置
+## Build
+
 ```bash
 npm run build
 ```
+
+The original uploaded JSX is preserved as `src/App.jsx`.

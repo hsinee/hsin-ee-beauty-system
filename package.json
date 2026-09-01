@@ -1,7 +1,7 @@
 {
-  "name": "hsin-ee-studio-system-v5",
+  "name": "hsin-ee-studio-system",
   "private": true,
-  "version": "5.0.0",
+  "version": "6.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,14 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "lucide-react": "^0.468.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "recharts": "^2.15.0",
-    "xlsx": "^0.18.5"
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "recharts": "latest",
+    "vite": "latest",
+    "xlsx": "latest"
   },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^5.4.10"
-  }
+  "devDependencies": {}
 }

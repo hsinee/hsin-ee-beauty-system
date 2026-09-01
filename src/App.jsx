@@ -422,7 +422,6 @@ const PERIODS = [
   { id: 'today', label: '今日' },
   { id: 'week', label: '本週' },
   { id: 'month', label: '本月' },
-  { id: 'quarter', label: '本季' },
   { id: 'year', label: '今年' },
   { id: 'custom', label: '自訂' },
 ];
@@ -1871,6 +1870,12 @@ function ServiceFormModal({ service, onClose, onSave, onDelete }) {
 
 function ExpensesView({ data, onSave, onDelete }) {
   const [showAdd, setShowAdd] = useState(false);
+  const [period, setPeriod] = useState('month');
+  const [customStart, setCustomStart] = useState(todayISO());
+  const [customEnd, setCustomEnd] = useState(todayISO());
+  const [compareStart, setCompareStart] = useState('');
+  const [compareEnd, setCompareEnd] = useState('');
+
   const sorted = [...data.expenses].sort((a, b) => (a.date < b.date ? 1 : -1));
   const total = data.expenses.reduce((s, e) => s + Number(e.amount), 0);
 
@@ -1881,24 +1886,28 @@ function ExpensesView({ data, onSave, onDelete }) {
     return EXPENSE_CATEGORIES.map((c) => ({ name: c.name, total: map[c.name] || 0 }));
   }, [data.expenses]);
 
-  const monthCompare = useMemo(() => {
-    const thisMonth = monthRange(0);
-    const lastMonth = monthRange(-1);
-    const sumByCategory = (range) => {
+  const range = getRangeDates(period, customStart, customEnd);
+
+  const periodCompare = useMemo(() => {
+    const useManual = period === 'custom' && compareStart && compareEnd;
+    const prevRange = useManual ? { start: compareStart, end: compareEnd } : shiftRangeByPeriod(period, range, customStart, customEnd);
+    const sumByCategory = (r) => {
       const map = {};
       EXPENSE_CATEGORIES.forEach((c) => { map[c.name] = 0; });
       data.expenses
-        .filter((e) => e.date >= range.start && e.date <= range.end)
+        .filter((e) => e.date >= r.start && e.date <= r.end)
         .forEach((e) => { map[e.category] = (map[e.category] || 0) + Number(e.amount || 0); });
       return map;
     };
-    const currMap = sumByCategory(thisMonth);
-    const prevMap = sumByCategory(lastMonth);
+    const currMap = sumByCategory(range);
+    const prevMap = sumByCategory(prevRange);
     const currTotal = Object.values(currMap).reduce((a, b) => a + b, 0);
     const prevTotal = Object.values(prevMap).reduce((a, b) => a + b, 0);
     const rows = EXPENSE_CATEGORIES.map((c) => ({ label: c.name, curr: currMap[c.name], prev: prevMap[c.name] }));
-    return { thisLabel: thisMonth.label, lastLabel: lastMonth.label, currTotal, prevTotal, rows };
-  }, [data.expenses]);
+    const currLabel = period === 'custom' ? `${fmtDate(range.start)}–${fmtDate(range.end)}` : PERIODS.find((p) => p.id === period).label;
+    const prevLabel = period === 'custom' ? `${fmtDate(prevRange.start)}–${fmtDate(prevRange.end)}` : PREV_PERIOD_LABEL[period];
+    return { currLabel, prevLabel, currTotal, prevTotal, rows };
+  }, [data.expenses, period, range.start, range.end, customStart, customEnd, compareStart, compareEnd]);
 
   return (
     <div>
@@ -1910,19 +1919,47 @@ function ExpensesView({ data, onSave, onDelete }) {
         <button className="btn-primary" onClick={() => setShowAdd(true)}><Plus size={16} /> 新增支出</button>
       </div>
 
+      <div className="period-tabs" style={{ marginBottom: 14 }}>
+        {PERIODS.map((p) => (
+          <button
+            key={p.id}
+            className={'period-tab' + (period === p.id ? ' active' : '')}
+            onClick={() => setPeriod(p.id)}
+          >{p.label}</button>
+        ))}
+      </div>
+
+      {period === 'custom' && (
+        <div className="custom-range">
+          <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} />
+          <span className="muted">至</span>
+          <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} />
+        </div>
+      )}
+
+      {period === 'custom' && (
+        <div className="custom-range compare-range">
+          <span className="muted small">比較期間</span>
+          <input type="date" value={compareStart} onChange={(e) => setCompareStart(e.target.value)} />
+          <span className="muted">至</span>
+          <input type="date" value={compareEnd} onChange={(e) => setCompareEnd(e.target.value)} />
+          <span className="muted small">留空則自動抓等長的前一段期間</span>
+        </div>
+      )}
+
       <div className="panel" style={{ marginBottom: 24 }}>
-        <h4 className="panel-title">{monthCompare.thisLabel} vs {monthCompare.lastLabel}</h4>
+        <h4 className="panel-title">{periodCompare.currLabel} vs {periodCompare.prevLabel}</h4>
         <table className="compare-table">
           <thead>
-            <tr><th></th><th>{monthCompare.thisLabel}</th><th>{monthCompare.lastLabel}</th><th>成長率</th></tr>
+            <tr><th></th><th>{periodCompare.currLabel}</th><th>{periodCompare.prevLabel}</th><th>成長率</th></tr>
           </thead>
           <tbody>
             <tr>
               <td className="strong">支出總額</td>
-              <td className="strong">{fmtMoney(monthCompare.currTotal)}</td>
-              <td className="muted">{fmtMoney(monthCompare.prevTotal)}</td>
+              <td className="strong">{fmtMoney(periodCompare.currTotal)}</td>
+              <td className="muted">{fmtMoney(periodCompare.prevTotal)}</td>
               {(() => {
-                const change = pctChange(monthCompare.currTotal, monthCompare.prevTotal);
+                const change = pctChange(periodCompare.currTotal, periodCompare.prevTotal);
                 const positive = change !== null && change >= 0;
                 return (
                   <td className={change === null ? 'muted' : positive ? 'change-down' : 'change-up'}>
@@ -1931,7 +1968,7 @@ function ExpensesView({ data, onSave, onDelete }) {
                 );
               })()}
             </tr>
-            {monthCompare.rows.map((r) => {
+            {periodCompare.rows.map((r) => {
               const change = pctChange(r.curr, r.prev);
               const positive = change !== null && change >= 0;
               return (
