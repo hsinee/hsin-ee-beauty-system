@@ -923,7 +923,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
   const [error, setError] = useState('');
 
   const submit = () => {
-    if (!form.name.trim() || !form.phone.trim()) return;
+    if (!form.name.trim() || !form.phone.trim()) { setError('姓名和手機是必填欄位'); return; }
     const missing = customerFields.find((f) => f.required && !(form.customFields[f.id] || '').trim());
     if (missing) { setError(`「${missing.label}」是必填欄位`); return; }
     setError('');
@@ -962,15 +962,15 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
 
   return (
     <Modal title={customer ? '編輯客戶' : '新增客戶'} onClose={onClose}>
-      <Field label="姓名"><input value={form.name} onChange={set('name')} placeholder="客人姓名" autoFocus /></Field>
-      <Field label="手機"><input value={form.phone} onChange={set('phone')} placeholder="09XX-XXX-XXX" /></Field>
-      <Field label="LINE 名稱"><input value={form.lineId} onChange={set('lineId')} /></Field>
-      <Field label="Email"><input value={form.email} onChange={set('email')} /></Field>
-      <Field label="生日" hint="用來標示本月壽星，只需要正確的月份和日期"><input type="date" value={form.birthday} onChange={set('birthday')} /></Field>
-      <Field label="儲值餘額" hint="客人預先儲值的金額，服務時可選「使用儲值扣款」自動扣除">
+      <Field label="姓名 *"><input value={form.name} onChange={set('name')} placeholder="客人姓名" autoFocus /></Field>
+      <Field label="手機 *"><input value={form.phone} onChange={set('phone')} placeholder="09XX-XXX-XXX" /></Field>
+      <Field label="LINE 名稱（選填）"><input value={form.lineId} onChange={set('lineId')} /></Field>
+      <Field label="Email（選填）"><input value={form.email} onChange={set('email')} /></Field>
+      <Field label="生日（選填）" hint="用來標示本月壽星，只需要正確的月份和日期"><input type="date" value={form.birthday} onChange={set('birthday')} /></Field>
+      <Field label="儲值餘額（選填）" hint="客人預先儲值的金額，服務時可選「使用儲值扣款」自動扣除">
         <input type="number" value={form.storedValueBalance} onChange={set('storedValueBalance')} />
       </Field>
-      <Field label="得知來源">
+      <Field label="得知來源（選填）">
         <select value={form.source} onChange={set('source')}>
           {data.sources.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
@@ -982,7 +982,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
         </Field>
       ))}
 
-      <Field label="備註"><textarea rows={3} value={form.notes} onChange={set('notes')} placeholder="內部備註" /></Field>
+      <Field label="備註（選填）"><textarea rows={3} value={form.notes} onChange={set('notes')} placeholder="內部備註" /></Field>
 
       {error && <p style={{ color: '#b56f65', fontSize: 13 }}>{error}</p>}
 
@@ -1515,7 +1515,6 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const [source, setSource] = useState((record && record.source) || '回訪');
   const [notes, setNotes] = useState((record && record.notes) || '');
   const [addons, setAddons] = useState((record && record.addons) || []);
-  const [depositPaid, setDepositPaid] = useState(record ? !!record.depositPaid : false);
   const [depositAmount, setDepositAmount] = useState(record && record.depositAmount ? String(record.depositAmount) : '');
   const [status, setStatus] = useState((record && record.status) || 'confirmed');
   const [paymentStatus, setPaymentStatus] = useState((record && record.paymentStatus) || 'paid_full');
@@ -1600,8 +1599,8 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       addons: addons
         .filter((a) => a.amount !== '' && Number(a.amount) > 0)
         .map((a) => ({ id: a.id, type: a.type, description: a.description.trim(), amount: Number(a.amount) })),
-      depositPaid,
-      depositAmount: depositPaid ? Number(depositAmount || 0) : 0,
+      depositPaid: paymentStatus === 'deposit_only',
+      depositAmount: paymentStatus === 'deposit_only' ? Number(depositAmount || 0) : 0,
       paymentMethod,
       status,
       paymentStatus,
@@ -1617,6 +1616,11 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
     setQuickAddBusy(true);
     try {
       const newCust = await onQuickAddCustomer({ name: quickName.trim(), phone: quickPhone.trim(), source });
+      // 這個 setTimeout 不是隨便加的：本機存檔幾乎是同步完成，如果緊接著在這個
+      // click 事件裡就切換畫面（搜尋框換成「更換」按鈕），瀏覽器有時會把同一次
+      // 點擊的 mouseup 誤判成點在新出現的「更換」按鈕上，導致選好的客人又被清掉。
+      // 延一個 tick 讓這次點擊事件完全處理完，再切換畫面就不會有這個問題。
+      await new Promise((r) => setTimeout(r, 0));
       setCustomerId(newCust.id);
       setCustomerQuery('');
       setShowQuickAdd(false);
@@ -1673,10 +1677,12 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         )}
       </Field>
 
-      <div className="field-row">
-        <Field label="日期"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
-        <Field label="時間" hint="預約可填，現場服務可留空"><input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></Field>
-      </div>
+      <Field label="服務日期" hint="時間預約可填，現場服務可留空">
+        <div className="date-time-group">
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+        </div>
+      </Field>
 
       <Field label="服務項目">
         <select value={serviceId} onChange={(e) => selectService(e.target.value)}>
@@ -1726,13 +1732,21 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         </Field>
         <Field
           label="付款狀態"
-          hint={paymentStatus === 'stored_value' && chosenCustomer ? `目前儲值餘額 ${fmtMoney(chosenCustomer.storedValueBalance)}` : undefined}
+          hint={paymentStatus === 'stored_value' && chosenCustomer
+            ? `目前餘額 ${fmtMoney(chosenCustomer.storedValueBalance)}，扣款後剩 ${fmtMoney(chosenCustomer.storedValueBalance - grandTotal)}`
+            : undefined}
         >
           <select value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
             {PAYMENT_STATUS_OPTIONS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
         </Field>
       </div>
+
+      {paymentStatus === 'deposit_only' && (
+        <Field label="訂金金額" hint="選填，沒填金額也會標示已收訂金">
+          <input type="number" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} placeholder="0" />
+        </Field>
+      )}
 
       <label className="checkbox-row">
         <input type="checkbox" checked={hasDiscount} onChange={(e) => setHasDiscount(e.target.checked)} />
@@ -1771,17 +1785,6 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         {addonSum > 0 && <div className="final-amount-line"><span className="muted">加購金額</span><span>{fmtMoney(addonSum)}</span></div>}
         <div className="final-amount-line total"><span className="strong">總金額</span><span className="strong">{fmtMoney(grandTotal)}</span></div>
       </div>
-
-      <label className="checkbox-row">
-        <input type="checkbox" checked={depositPaid} onChange={(e) => setDepositPaid(e.target.checked)} />
-        已收訂金
-      </label>
-
-      {depositPaid && (
-        <Field label="訂金金額" hint="選填，沒填金額也會標示已收訂金">
-          <input type="number" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} placeholder="0" />
-        </Field>
-      )}
 
       {isFirstTime && (
         <Field label="客戶來源" hint="這是這位客人的第一筆消費">
@@ -2371,6 +2374,8 @@ function GlobalStyles({ mobileNavOpen, primaryColor }) {
       .field { display: flex; flex-direction: column; gap: 6px; flex: 1; }
       .field-row { display: flex; gap: 12px; flex-wrap: wrap; }
       .field-row > label { flex: 1 1 140px; min-width: 0; }
+      .date-time-group { display: flex; gap: 8px; }
+      .date-time-group input { flex: 1 1 0; min-width: 0; }
       .field-label { font-size: 12px; color: var(--taupe); }
       .field-hint { font-size: 11px; color: var(--taupe); }
       .field input, .field select, .field textarea {
