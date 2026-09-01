@@ -253,24 +253,38 @@ create policy "expenses_store_delete" on expenses for delete
 -- ============================================================
 -- 用 security definer 是因為建立 stores 列之後，還要馬上把 profiles 綁定，
 -- 這兩個動作要在同一個交易內完成，用 RPC 包起來比在前端分兩次呼叫更不會半途出錯。
+--
+-- 注意：這裡刻意不在函式「內部」呼叫 auth.uid()，而是要求呼叫端把已經登入的
+-- user id 當參數傳進來（前端用 supabase.auth.getUser() 取得）。實測發現
+-- auth.uid() 在某些專案的 SECURITY DEFINER 函式內部會讀不到，傳參數比較保險。
+-- 安全性靠下面的 grant/revoke：只有 authenticated 角色能呼叫這個函式。
 
-create or replace function bootstrap_store(p_store_name text)
+drop function if exists bootstrap_store(text);
+
+create or replace function bootstrap_store(p_store_name text, p_user_id uuid)
 returns table (store_id uuid) as $$
 declare
   v_store_id uuid;
 begin
-  if exists (select 1 from profiles where id = auth.uid()) then
+  if p_user_id is null then
+    raise exception '請先登入';
+  end if;
+
+  if exists (select 1 from profiles where id = p_user_id) then
     raise exception '這個帳號已經有對應的店家了';
   end if;
 
   insert into stores (name) values (coalesce(nullif(trim(p_store_name), ''), '我的工作室'))
   returning id into v_store_id;
 
-  insert into profiles (id, store_id, role) values (auth.uid(), v_store_id, 'owner');
+  insert into profiles (id, store_id, role) values (p_user_id, v_store_id, 'owner');
 
   return query select v_store_id;
 end;
 $$ language plpgsql security definer set search_path = public;
+
+revoke all on function bootstrap_store(text, uuid) from public;
+grant execute on function bootstrap_store(text, uuid) to authenticated;
 
 -- ============================================================
 -- 4. 客戶會員中心：手機號碼綁定 RPC
@@ -279,19 +293,22 @@ $$ language plpgsql security definer set search_path = public;
 -- 只能看到 auth_user_id 已經等於自己的那筆 customers 資料；在還沒綁定前，
 -- 需要用有提升權限的函式去依「store_id + phone」找到既有客戶並完成綁定，
 -- 這段比對邏輯刻意不放在前端，避免有人亂猜手機號碼就綁到別人的消費紀錄。
+-- 同上，user id 由呼叫端傳入，不在函式內部呼叫 auth.uid()。
 
-create or replace function bind_customer_account(p_store_id uuid, p_phone text, p_name text)
+drop function if exists bind_customer_account(uuid, text, text);
+
+create or replace function bind_customer_account(p_store_id uuid, p_phone text, p_name text, p_user_id uuid)
 returns table (customer_id uuid) as $$
 declare
   v_id uuid;
   v_max int;
   v_member_no text;
 begin
-  if auth.uid() is null then
+  if p_user_id is null then
     raise exception '請先登入';
   end if;
 
-  if exists (select 1 from customers where auth_user_id = auth.uid()) then
+  if exists (select 1 from customers where auth_user_id = p_user_id) then
     raise exception '這個帳號已經綁定過會員資料了';
   end if;
 
@@ -303,7 +320,7 @@ begin
   limit 1;
 
   if v_id is not null then
-    update customers set auth_user_id = auth.uid() where id = v_id;
+    update customers set auth_user_id = p_user_id where id = v_id;
   else
     select coalesce(max(substring(member_no from 2)::int), 0) into v_max
     from customers where store_id = p_store_id and member_no ~ '^W[0-9]+$';
@@ -312,7 +329,7 @@ begin
     insert into customers (store_id, auth_user_id, member_no, name, phone, source, first_visit_date)
     values (
       p_store_id,
-      auth.uid(),
+      p_user_id,
       v_member_no,
       coalesce(nullif(trim(p_name), ''), '新客人'),
       p_phone,
@@ -325,3 +342,6 @@ begin
   return query select v_id;
 end;
 $$ language plpgsql security definer set search_path = public;
+
+revoke all on function bind_customer_account(uuid, text, text, uuid) from public;
+grant execute on function bind_customer_account(uuid, text, text, uuid) to authenticated;

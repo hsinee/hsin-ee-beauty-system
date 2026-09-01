@@ -193,7 +193,12 @@ export async function fetchStore(storeId) {
 }
 
 export async function bootstrapStore(storeName) {
-  const { data, error } = await supabase.rpc('bootstrap_store', { p_store_name: storeName });
+  const { data: userData, error: userErr } = await supabase.auth.getUser();
+  throwIfError(userErr);
+  const { data, error } = await supabase.rpc('bootstrap_store', {
+    p_store_name: storeName,
+    p_user_id: userData.user.id,
+  });
   throwIfError(error);
   return data[0].store_id;
 }
@@ -214,10 +219,13 @@ export async function updateStore(storeId, patch) {
 }
 
 export async function bindCustomerAccount(storeId, phone, name) {
+  const { data: userData, error: userErr } = await supabase.auth.getUser();
+  throwIfError(userErr);
   const { data, error } = await supabase.rpc('bind_customer_account', {
     p_store_id: storeId,
     p_phone: phone,
     p_name: name,
+    p_user_id: userData.user.id,
   });
   throwIfError(error);
   return data[0].customer_id;
