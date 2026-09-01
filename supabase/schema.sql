@@ -54,12 +54,16 @@ create table if not exists customers (
   can_photograph text default 'unset',
   model_status text default 'unset',
   reminder_sent_for date,
+  -- 儲值餘額（客人預先儲值的金額），店家在客戶資料裡直接調整這個數字。
+  stored_value_balance numeric not null default 0,
   created_at timestamptz default now(),
   unique (store_id, member_no),
   unique (auth_user_id)
 );
 create index if not exists customers_store_idx on customers (store_id);
 create index if not exists customers_auth_idx on customers (auth_user_id);
+
+alter table customers add column if not exists stored_value_balance numeric not null default 0;
 
 create table if not exists services (
   id uuid primary key default gen_random_uuid(),
@@ -99,10 +103,18 @@ create table if not exists records (
   deposit_paid boolean default false,
   deposit_amount numeric default 0,
   reminder_sent boolean default false,
+  -- 預約狀態：pending(待確認) / confirmed(已確認) / arrived(已到店) /
+  -- no_show(未到店) / cancelled(已取消) / postponed(延期)
+  status text not null default 'confirmed',
+  -- 付款狀態：paid_full(已付全款) / deposit_only(已付訂金) / stored_value(使用儲值) / unpaid(未付款)
+  payment_status text not null default 'paid_full',
   created_at timestamptz default now()
 );
 create index if not exists records_store_date_idx on records (store_id, date);
 create index if not exists records_customer_idx on records (customer_id);
+
+alter table records add column if not exists status text not null default 'confirmed';
+alter table records add column if not exists payment_status text not null default 'paid_full';
 
 create table if not exists record_addons (
   id uuid primary key default gen_random_uuid(),

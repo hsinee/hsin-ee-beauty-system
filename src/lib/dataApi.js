@@ -20,6 +20,7 @@ export function customerFromRow(row) {
     modelStatus: row.model_status || 'unset',
     reminderSentFor: row.reminder_sent_for || '',
     authUserId: row.auth_user_id || null,
+    storedValueBalance: Number(row.stored_value_balance) || 0,
   };
 }
 
@@ -39,6 +40,7 @@ function customerToRow(c, storeId) {
     can_photograph: c.canPhotograph || 'unset',
     model_status: c.modelStatus || 'unset',
     reminder_sent_for: c.reminderSentFor || null,
+    stored_value_balance: Number(c.storedValueBalance) || 0,
   };
 }
 
@@ -83,6 +85,8 @@ export function recordFromRow(row) {
     depositPaid: !!row.deposit_paid,
     depositAmount: Number(row.deposit_amount) || 0,
     reminderSent: !!row.reminder_sent,
+    status: row.status || 'confirmed',
+    paymentStatus: row.payment_status || 'paid_full',
     addons: (row.record_addons || []).map((a) => ({
       id: a.id,
       type: a.type,
@@ -111,6 +115,8 @@ function recordToRow(r, storeId) {
     deposit_paid: !!r.depositPaid,
     deposit_amount: Number(r.depositAmount) || 0,
     reminder_sent: !!r.reminderSent,
+    status: r.status || 'confirmed',
+    payment_status: r.paymentStatus || 'paid_full',
   };
 }
 
@@ -330,6 +336,68 @@ export async function saveExpense(expense, storeId) {
 export async function deleteExpense(id) {
   const { error } = await supabase.from('expenses').delete().eq('id', id);
   throwIfError(error);
+}
+
+/* ============================================================
+   完整資料備份／還原（JSON，供換裝置或店家自行留存用）
+   這跟 Dashboard 那個「匯出全部系統資料」Excel 不一樣：Excel 是給人看的報表，
+   這裡的 JSON 備份是給系統自己讀回去用的，換裝置、或想留一份自己的備份都靠這個。
+   ============================================================ */
+
+const BACKUP_VERSION = 1;
+
+export async function exportBackup(store) {
+  const bundle = await fetchStoreBundle();
+  return {
+    backupVersion: BACKUP_VERSION,
+    exportedAt: new Date().toISOString(),
+    storeName: store.name,
+    data: bundle,
+  };
+}
+
+// 還原會先清空這間店現有的客戶／服務／紀錄／成本，再整批寫入備份檔的內容，
+// 是「整包覆蓋」不是「合併」，跟大部分本機備份工具的行為一致。
+export async function restoreFromBackup(storeId, backup) {
+  if (!backup || !backup.data) throw new Error('備份檔格式不正確');
+  const { customers = [], services = [], records = [], expenses = [] } = backup.data;
+
+  const delCustomers = await supabase.from('customers').delete().eq('store_id', storeId);
+  throwIfError(delCustomers.error);
+  const delServices = await supabase.from('services').delete().eq('store_id', storeId);
+  throwIfError(delServices.error);
+  const delExpenses = await supabase.from('expenses').delete().eq('store_id', storeId);
+  throwIfError(delExpenses.error);
+
+  if (customers.length) {
+    const { error } = await supabase.from('customers').insert(customers.map((c) => customerToRow(c, storeId)));
+    throwIfError(error);
+  }
+  if (services.length) {
+    const { error } = await supabase.from('services').insert(services.map((s) => serviceToRow(s, storeId)));
+    throwIfError(error);
+  }
+  if (records.length) {
+    const { error } = await supabase.from('records').insert(records.map((r) => recordToRow(r, storeId)));
+    throwIfError(error);
+
+    const addonRows = [];
+    records.forEach((r) => {
+      (r.addons || []).forEach((a) => {
+        if (Number(a.amount) > 0) {
+          addonRows.push({ record_id: r.id, type: a.type, description: a.description || null, amount: Number(a.amount) });
+        }
+      });
+    });
+    if (addonRows.length) {
+      const { error: addonErr } = await supabase.from('record_addons').insert(addonRows);
+      throwIfError(addonErr);
+    }
+  }
+  if (expenses.length) {
+    const { error } = await supabase.from('expenses').insert(expenses.map((e) => expenseToRow(e, storeId)));
+    throwIfError(error);
+  }
 }
 
 /* ============================================================

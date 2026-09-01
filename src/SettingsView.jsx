@@ -1,5 +1,18 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
+import { exportBackup, restoreFromBackup } from './lib/dataApi.js';
+
+function downloadJSON(filename, obj) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 function newId(prefix) {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
@@ -58,8 +71,59 @@ export default function SettingsView({ store, onSave }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupError, setBackupError] = useState('');
+  const [backupDone, setBackupDone] = useState('');
+  const fileInputRef = useRef(null);
 
   const set = (k) => (e) => { setForm({ ...form, [k]: e.target.value }); setSaved(false); };
+
+  const handleExportBackup = async () => {
+    setBackupBusy(true);
+    setBackupError('');
+    setBackupDone('');
+    try {
+      const backup = await exportBackup(store);
+      const safeName = (store.name || '工作室').replace(/[\\/:*?"<>|]/g, '');
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadJSON(`${safeName}_備份_${stamp}.json`, backup);
+      setBackupDone('已下載備份檔');
+    } catch (err) {
+      setBackupError(err.message);
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const handleImportClick = () => fileInputRef.current?.click();
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBackupError('');
+    setBackupDone('');
+    let backup;
+    try {
+      backup = JSON.parse(await file.text());
+    } catch (err) {
+      setBackupError('這個檔案不是有效的備份檔（JSON 格式錯誤）');
+      return;
+    }
+    const ok = window.confirm(
+      '還原備份會刪除目前系統裡「這間店」所有的客戶、服務項目、服務紀錄、成本資料，改成備份檔裡的內容，動作無法復原。\n\n確定要繼續嗎？'
+    );
+    if (!ok) return;
+    setBackupBusy(true);
+    try {
+      await restoreFromBackup(store.id, backup);
+      setBackupDone('還原完成，頁面即將重新整理');
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (err) {
+      setBackupError(err.message);
+      setBackupBusy(false);
+    }
+  };
 
   const setTierLabel = (id, label) => {
     setPriceTiers(priceTiers.map((t) => (t.id === id ? { ...t, label } : t)));
@@ -213,6 +277,29 @@ export default function SettingsView({ store, onSave }) {
           </div>
         ))}
         <button type="button" className="btn-secondary small" onClick={addTemplate}>+ 新增範本</button>
+      </div>
+
+      <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>
+        <div className="field-label" style={{ marginBottom: 4 }}>資料備份 / 換裝置</div>
+        <p className="muted small" style={{ marginBottom: 12 }}>
+          匯出一份完整備份檔（.json），可以自己留存，或是換手機/平板時，先在舊裝置匯出，
+          登入新裝置後在這裡匯入即可搬過去。跟 Dashboard 那個「匯出全部系統資料」不一樣：
+          那個 Excel 是給人看的報表，這裡的備份檔是給系統讀回去用的。
+        </p>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+          <button type="button" className="btn-secondary small" onClick={handleExportBackup} disabled={backupBusy}>
+            {backupBusy ? '處理中⋯' : '匯出備份 (.json)'}
+          </button>
+          <button type="button" className="btn-secondary small" onClick={handleImportClick} disabled={backupBusy}>
+            選擇備份檔匯入
+          </button>
+          <input ref={fileInputRef} type="file" accept="application/json,.json" onChange={handleImportFile} style={{ display: 'none' }} />
+        </div>
+        <p className="muted small" style={{ color: '#b56f65' }}>
+          ⚠️ 匯入備份會刪除目前系統裡這間店現有的客戶／服務項目／服務紀錄／成本資料，改成備份檔的內容，無法復原，請小心操作。
+        </p>
+        {backupError && <p style={{ color: '#b56f65', fontSize: 13 }}>{backupError}</p>}
+        {backupDone && <p style={{ color: '#4c7a3f', fontSize: 13 }}>{backupDone}</p>}
       </div>
 
       <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>

@@ -27,6 +27,28 @@ import SettingsView from './SettingsView.jsx';
 
 const DEFAULT_SOURCES = ['IG', 'Threads', 'Google', '朋友介紹', 'LINE', '自然搜尋', '其他'];
 const PAYMENT_METHODS = ['現金', '轉帳', 'LINE Pay', '信用卡', '其他'];
+
+const RECORD_STATUS_OPTIONS = [
+  { id: 'pending', label: '待確認' },
+  { id: 'confirmed', label: '已確認' },
+  { id: 'arrived', label: '已到店' },
+  { id: 'no_show', label: '未到店' },
+  { id: 'cancelled', label: '已取消' },
+  { id: 'postponed', label: '延期' },
+];
+function recordStatusLabel(id) {
+  return (RECORD_STATUS_OPTIONS.find((s) => s.id === id) || {}).label || id;
+}
+
+const PAYMENT_STATUS_OPTIONS = [
+  { id: 'paid_full', label: '已付全款' },
+  { id: 'deposit_only', label: '已付訂金' },
+  { id: 'stored_value', label: '使用儲值扣款' },
+  { id: 'unpaid', label: '未收款' },
+];
+function paymentStatusLabel(id) {
+  return (PAYMENT_STATUS_OPTIONS.find((s) => s.id === id) || {}).label || id;
+}
 // 回訪優惠視窗：最近一次服務後 6 週（42 天）內回訪享優惠，
 // 從第 4 週開始（滿 22 天）就在「回訪提醒」列表跳出來，讓店家有時間主動聯繫
 const REVISIT_WINDOW_DAYS = 42;
@@ -711,6 +733,7 @@ function exportAllSystemData(data, store) {
       備註: c.notes || '',
       首次消費日期: s.first ? s.first.date : (c.firstVisitDate || ''),
       近期消費日期: s.last ? s.last.date : '',
+      儲值餘額: c.storedValueBalance || 0,
       累積消費: s.total,
       消費次數: s.count,
       平均客單價: s.count ? Math.round(s.total / s.count) : 0,
@@ -720,7 +743,7 @@ function exportAllSystemData(data, store) {
   custSheet['!cols'] = [
     { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 12 },
     { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 24 }, { wch: 12 }, { wch: 12 },
-    { wch: 10 }, { wch: 8 }, { wch: 10 },
+    { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 10 },
   ];
   XLSX.utils.book_append_sheet(wb, custSheet, '客戶資料');
 
@@ -742,6 +765,8 @@ function exportAllSystemData(data, store) {
         加購金額: addonsTotal(r),
         總金額: recordTotal(r),
         付款方式: r.paymentMethod,
+        付款狀態: paymentStatusLabel(r.paymentStatus),
+        預約狀態: recordStatusLabel(r.status),
         已收訂金: r.depositPaid ? `是（$${r.depositAmount || 0}）` : '否',
         客源: r.source || '',
         備註: r.notes || '',
@@ -901,7 +926,8 @@ function CustomerFormModal({ data, customer, onClose, onSave, onDelete }) {
     name: customer.name, phone: customer.phone, lineId: customer.lineId || '',
     email: customer.email || '', birthday: customer.birthday || '', source: customer.source,
     notes: customer.notes || '', canPhotograph: customer.canPhotograph || 'unset', modelStatus: customer.modelStatus || 'unset',
-  } : { name: '', phone: '', lineId: '', email: '', birthday: '', source: data.sources[0], notes: '', canPhotograph: 'unset', modelStatus: 'unset' });
+    storedValueBalance: String(customer.storedValueBalance || 0),
+  } : { name: '', phone: '', lineId: '', email: '', birthday: '', source: data.sources[0], notes: '', canPhotograph: 'unset', modelStatus: 'unset', storedValueBalance: '0' });
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -919,6 +945,7 @@ function CustomerFormModal({ data, customer, onClose, onSave, onDelete }) {
         notes: form.notes.trim(),
         canPhotograph: form.canPhotograph,
         modelStatus: form.modelStatus,
+        storedValueBalance: Number(form.storedValueBalance) || 0,
       });
     } else {
       const memberNo = nextMemberNo(data.customers);
@@ -934,6 +961,7 @@ function CustomerFormModal({ data, customer, onClose, onSave, onDelete }) {
         notes: form.notes.trim(),
         canPhotograph: form.canPhotograph,
         modelStatus: form.modelStatus,
+        storedValueBalance: Number(form.storedValueBalance) || 0,
         firstVisitDate: todayISO(),
         reminderSentFor: '',
       });
@@ -947,6 +975,9 @@ function CustomerFormModal({ data, customer, onClose, onSave, onDelete }) {
       <Field label="LINE 名稱"><input value={form.lineId} onChange={set('lineId')} /></Field>
       <Field label="Email"><input value={form.email} onChange={set('email')} /></Field>
       <Field label="生日" hint="用來標示本月壽星，只需要正確的月份和日期"><input type="date" value={form.birthday} onChange={set('birthday')} /></Field>
+      <Field label="儲值餘額" hint="客人預先儲值的金額，服務時可選「使用儲值扣款」自動扣除">
+        <input type="number" value={form.storedValueBalance} onChange={set('storedValueBalance')} />
+      </Field>
       <Field label="得知來源">
         <select value={form.source} onChange={set('source')}>
           {data.sources.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -1028,6 +1059,7 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
         <KpiCard label="近期消費日期" value={s.last ? fmtDate(s.last.date) : '—'} />
         <KpiCard label="生日" value={customer.birthday ? fmtDate(customer.birthday) : '未填寫'} />
         <KpiCard label="累積消費" value={fmtMoney(s.total)} />
+        <KpiCard label="儲值餘額" value={fmtMoney(customer.storedValueBalance)} />
         <KpiCard label="消費次數" value={s.count} />
         <KpiCard label="平均客單價" value={fmtMoney(s.count ? s.total / s.count : 0)} />
         <KpiCard
@@ -1058,6 +1090,7 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
                 <div className="appointment-time">{a.time ? (<><Clock size={13} /> {a.time}</>) : '未定時間'}</div>
                 <div className="appointment-main">
                   <span className="strong">{fmtDate(a.date)}</span>
+                  {a.source === 'record' && a.status && <span className={'tier-tag status-' + a.status}>{recordStatusLabel(a.status)}</span>}
                   {a.serviceName && <div className="muted small">{a.serviceName}{a.source === 'record' ? ` ・ ${fmtMoney(a.amount)}` : ''}</div>}
                   {a.notes && <div className="muted small">備註：{a.notes}</div>}
                 </div>
@@ -1087,6 +1120,9 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
                         {tierLabel(store.priceTiers, r.priceTier)}
                       </span>
                     )}
+                    {r.status && r.status !== 'confirmed' && (
+                      <span className={'tier-tag status-' + r.status}>{recordStatusLabel(r.status)}</span>
+                    )}
                   </span>
                   <span className="strong">{fmtMoney(recordTotal(r))}</span>
                 </div>
@@ -1094,7 +1130,7 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
                   <div className="muted small">加購：{r.addons.map((a) => `${a.type}${a.description ? '(' + a.description + ')' : ''} ${fmtMoney(a.amount)}`).join('、')}</div>
                 )}
                 <div className="muted small">
-                  付款：{r.paymentMethod}
+                  付款：{r.paymentMethod}{r.paymentStatus ? `（${paymentStatusLabel(r.paymentStatus)}）` : ''}
                   {r.discount ? ` ・ 折扣：${fmtMoney(r.discount)}（原價 ${fmtMoney(r.listPrice)}）` : ''}
                   {r.source ? ` ・ 來源：${r.source}` : ''}
                   {r.notes ? ` ・ 備註：${r.notes}` : ''}
@@ -1212,6 +1248,9 @@ function AppointmentCardItem({ a, store, onToggleReminded, onDelete, onEdit, onO
       <div className="appointment-main">
         <button className="text-link strong" onClick={() => onOpenCustomer(a.customerId)}>{a.customer.name}</button>
         <span className="muted small"> {a.customer.phone}{a.customer.lineId ? ` ・ LINE ${a.customer.lineId}` : ''}</span>
+        {a.source === 'record' && a.status && a.status !== 'confirmed' && (
+          <span className={'tier-tag status-' + a.status}>{recordStatusLabel(a.status)}</span>
+        )}
         {a.serviceName && <div className="muted small">{a.serviceName}{a.source === 'record' ? ` ・ ${fmtMoney(recordTotal(a))}` : ''}</div>}
         {a.source === 'record' && a.addons && a.addons.length > 0 && (
           <div className="muted small">加購：{a.addons.map((x) => x.type).join('、')}</div>
@@ -1494,6 +1533,8 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const [addons, setAddons] = useState((record && record.addons) || []);
   const [depositPaid, setDepositPaid] = useState(record ? !!record.depositPaid : false);
   const [depositAmount, setDepositAmount] = useState(record && record.depositAmount ? String(record.depositAmount) : '');
+  const [status, setStatus] = useState((record && record.status) || 'confirmed');
+  const [paymentStatus, setPaymentStatus] = useState((record && record.paymentStatus) || 'paid_full');
 
   const activeServices = data.services.filter((s) => s.active);
   const selectedService = activeServices.find((s) => s.id === serviceId);
@@ -1578,6 +1619,8 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       depositPaid,
       depositAmount: depositPaid ? Number(depositAmount || 0) : 0,
       paymentMethod,
+      status,
+      paymentStatus,
       source: isFirstTime ? source : '回訪',
       notes: notes.trim(),
       reminderSent: isEditing ? (record.reminderSent || false) : false,
@@ -1687,6 +1730,22 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         <Field label="付款方式">
           <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
             {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      <div className="field-row">
+        <Field label="預約狀態">
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            {RECORD_STATUS_OPTIONS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+        </Field>
+        <Field
+          label="付款狀態"
+          hint={paymentStatus === 'stored_value' && chosenCustomer ? `目前儲值餘額 ${fmtMoney(chosenCustomer.storedValueBalance)}` : undefined}
+        >
+          <select value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
+            {PAYMENT_STATUS_OPTIONS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
         </Field>
       </div>
@@ -2255,6 +2314,11 @@ function GlobalStyles({ mobileNavOpen, primaryColor }) {
       .tier-tag { display: inline-block; font-size: 10px; font-weight: 500; padding: 2px 7px; border-radius: 20px; margin-left: 8px; vertical-align: middle; }
       .tier-tag.tier-trial { background: var(--beige); color: var(--rose-deep); }
       .tier-tag.tier-brand { background: #E5EEE3; color: #5A7A54; }
+      .tier-tag.status-pending { background: #FDF3D9; color: #9A7B1E; }
+      .tier-tag.status-arrived { background: #E5EEE3; color: #5A7A54; }
+      .tier-tag.status-no_show { background: #FBE9E7; color: #b56f65; }
+      .tier-tag.status-cancelled { background: #F0E4E1; color: #8f8178; }
+      .tier-tag.status-postponed { background: #E6EEF5; color: #4A6C8C; }
     
       .quick-preview { background: var(--cream); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; margin-top: 8px; }
       .quick-preview-notes { font-size: 12px; color: var(--brown); margin: 6px 0; line-height: 1.5; }
@@ -2500,6 +2564,17 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
         const exists = d.records.some((r) => r.id === saved.id);
         d.records = exists ? d.records.map((r) => (r.id === saved.id ? saved : r)) : [...d.records, saved];
       });
+      // 用儲值扣款：新增當下直接從客人餘額扣掉這筆總金額（編輯既有紀錄不會重複扣）。
+      if (saved.paymentStatus === 'stored_value') {
+        const customer = data.customers.find((c) => c.id === saved.customerId);
+        if (customer) {
+          const updatedCustomer = await apiSaveCustomer(
+            { ...customer, storedValueBalance: (Number(customer.storedValueBalance) || 0) - recordTotal(saved) },
+            store.id
+          );
+          updateData((d) => { d.customers = d.customers.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)); });
+        }
+      }
       setAddRecordFor(null);
     } catch (e) {
       reportError(e);
