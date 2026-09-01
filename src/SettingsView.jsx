@@ -68,6 +68,7 @@ export default function SettingsView({ store, onSave }) {
     store.priceTiers && store.priceTiers.length ? store.priceTiers : [{ id: newId('tier'), label: '原價' }]
   );
   const [templates, setTemplates] = useState(store.messageTemplates || []);
+  const [customerFields, setCustomerFields] = useState(store.customerFields || []);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -163,6 +164,23 @@ export default function SettingsView({ store, onSave }) {
     setSaved(false);
   };
 
+  const setCustomFieldLabel = (id, label) => {
+    setCustomerFields(customerFields.map((f) => (f.id === id ? { ...f, label } : f)));
+    setSaved(false);
+  };
+  const setCustomFieldRequired = (id, required) => {
+    setCustomerFields(customerFields.map((f) => (f.id === id ? { ...f, required } : f)));
+    setSaved(false);
+  };
+  const addCustomField = () => {
+    setCustomerFields([...customerFields, { id: newId('field'), label: '', required: false }]);
+    setSaved(false);
+  };
+  const removeCustomField = (id) => {
+    setCustomerFields(customerFields.filter((f) => f.id !== id));
+    setSaved(false);
+  };
+
   const setTemplateField = (id, field, value) => {
     setTemplates(templates.map((t) => (t.id === id ? { ...t, [field]: value } : t)));
     setSaved(false);
@@ -195,12 +213,14 @@ export default function SettingsView({ store, onSave }) {
       return;
     }
     const cleanedTemplates = templates.map((t) => ({ ...t, name: t.name.trim(), content: t.content.trim() })).filter((t) => t.name && t.content);
+    const cleanedCustomerFields = customerFields.map((f) => ({ ...f, label: f.label.trim() })).filter((f) => f.label);
     setSaving(true);
     setError('');
     try {
-      await onSave({ ...form, logoUrl, priceTiers: cleanedTiers, messageTemplates: cleanedTemplates });
+      await onSave({ ...form, logoUrl, priceTiers: cleanedTiers, messageTemplates: cleanedTemplates, customerFields: cleanedCustomerFields });
       setPriceTiers(cleanedTiers);
       setTemplates(cleanedTemplates);
+      setCustomerFields(cleanedCustomerFields);
       setSaved(true);
     } catch (err) {
       setError(err.message);
@@ -262,6 +282,35 @@ export default function SettingsView({ store, onSave }) {
           </div>
         ))}
         <button type="button" className="btn-secondary small" onClick={addTier}>+ 新增方案</button>
+      </div>
+
+      <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>
+        <div className="field-label" style={{ marginBottom: 4 }}>客戶自訂欄位</div>
+        <p className="muted small" style={{ marginBottom: 12 }}>
+          新增客戶時，除了姓名/電話這些基本資料，你可以自己加欄位讓員工填寫（例如過敏史、拍照意願、
+          會員等級等等，任何美業項目都能自己定義）。勾選「必填」的欄位，新增客戶時沒填會擋下不能存檔。
+        </p>
+        {customerFields.map((f) => (
+          <div key={f.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%' }}>
+            <input
+              value={f.label}
+              onChange={(e) => setCustomFieldLabel(f.id, e.target.value)}
+              placeholder="欄位名稱，例如：過敏史"
+              style={{ flex: '1 1 140px', minWidth: 0 }}
+            />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--taupe, #8f8178)', whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={!!f.required} onChange={(e) => setCustomFieldRequired(f.id, e.target.checked)} />
+              必填
+            </label>
+            <button
+              type="button"
+              className="icon-btn ghost"
+              onClick={() => removeCustomField(f.id)}
+              title="刪除欄位"
+            ><Trash2 size={14} /></button>
+          </div>
+        ))}
+        <button type="button" className="btn-secondary small" onClick={addCustomField}>+ 新增欄位</button>
       </div>
 
       <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>

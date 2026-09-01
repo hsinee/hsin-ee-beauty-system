@@ -712,15 +712,13 @@ function customerSummary(customer, records) {
   return { own, total, count: own.length, last, first };
 }
 
-const PHOTO_CONSENT_LABEL = { yes: '可以拍照', no: '不可拍照', unset: '拍照意願未確認' };
-const MODEL_STATUS_LABEL = { active: '模特資格中', inactive: '已取消模特資格', unset: '非模特' };
-
 function exportAllSystemData(data, store) {
   const wb = XLSX.utils.book_new();
 
+  const customerFields = store?.customerFields || [];
   const custRows = data.customers.map((c) => {
     const s = customerSummary(c, data.records);
-    return {
+    const row = {
       會員編號: c.memberNo,
       姓名: c.name,
       電話: c.phone,
@@ -728,16 +726,16 @@ function exportAllSystemData(data, store) {
       Email: c.email || '',
       生日: c.birthday || '',
       得知來源: c.source || '',
-      拍照意願: PHOTO_CONSENT_LABEL[c.canPhotograph] || '拍照意願未確認',
-      模特資格: MODEL_STATUS_LABEL[c.modelStatus] || '非模特',
-      備註: c.notes || '',
-      首次消費日期: s.first ? s.first.date : (c.firstVisitDate || ''),
-      近期消費日期: s.last ? s.last.date : '',
-      儲值餘額: c.storedValueBalance || 0,
-      累積消費: s.total,
-      消費次數: s.count,
-      平均客單價: s.count ? Math.round(s.total / s.count) : 0,
     };
+    customerFields.forEach((f) => { row[f.label] = (c.customFields || {})[f.id] || ''; });
+    row.備註 = c.notes || '';
+    row.首次消費日期 = s.first ? s.first.date : (c.firstVisitDate || '');
+    row.近期消費日期 = s.last ? s.last.date : '';
+    row.儲值餘額 = c.storedValueBalance || 0;
+    row.累積消費 = s.total;
+    row.消費次數 = s.count;
+    row.平均客單價 = s.count ? Math.round(s.total / s.count) : 0;
+    return row;
   });
   const custSheet = XLSX.utils.json_to_sheet(custRows);
   custSheet['!cols'] = [
@@ -910,29 +908,25 @@ function CustomersView({ data, onOpenCustomer, onAddCustomer, onEditCustomer }) 
   );
 }
 
-const PHOTO_CONSENT_OPTIONS = [
-  { id: 'unset', label: '尚未確認' },
-  { id: 'yes', label: '可以拍照' },
-  { id: 'no', label: '不可拍照' },
-];
-const MODEL_STATUS_OPTIONS = [
-  { id: 'unset', label: '非模特' },
-  { id: 'active', label: '模特資格中' },
-  { id: 'inactive', label: '已取消資格' },
-];
-
-function CustomerFormModal({ data, customer, onClose, onSave, onDelete }) {
+function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete }) {
+  const customerFields = store.customerFields || [];
   const [form, setForm] = useState(customer ? {
     name: customer.name, phone: customer.phone, lineId: customer.lineId || '',
     email: customer.email || '', birthday: customer.birthday || '', source: customer.source,
-    notes: customer.notes || '', canPhotograph: customer.canPhotograph || 'unset', modelStatus: customer.modelStatus || 'unset',
+    notes: customer.notes || '',
     storedValueBalance: String(customer.storedValueBalance || 0),
-  } : { name: '', phone: '', lineId: '', email: '', birthday: '', source: data.sources[0], notes: '', canPhotograph: 'unset', modelStatus: 'unset', storedValueBalance: '0' });
+    customFields: { ...(customer.customFields || {}) },
+  } : { name: '', phone: '', lineId: '', email: '', birthday: '', source: data.sources[0], notes: '', storedValueBalance: '0', customFields: {} });
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const setCustomField = (id) => (e) => setForm({ ...form, customFields: { ...form.customFields, [id]: e.target.value } });
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [error, setError] = useState('');
 
   const submit = () => {
     if (!form.name.trim() || !form.phone.trim()) return;
+    const missing = customerFields.find((f) => f.required && !(form.customFields[f.id] || '').trim());
+    if (missing) { setError(`「${missing.label}」是必填欄位`); return; }
+    setError('');
     if (customer) {
       onSave({
         ...customer,
@@ -943,9 +937,8 @@ function CustomerFormModal({ data, customer, onClose, onSave, onDelete }) {
         birthday: form.birthday || '',
         source: form.source,
         notes: form.notes.trim(),
-        canPhotograph: form.canPhotograph,
-        modelStatus: form.modelStatus,
         storedValueBalance: Number(form.storedValueBalance) || 0,
+        customFields: form.customFields,
       });
     } else {
       const memberNo = nextMemberNo(data.customers);
@@ -959,9 +952,8 @@ function CustomerFormModal({ data, customer, onClose, onSave, onDelete }) {
         birthday: form.birthday || '',
         source: form.source,
         notes: form.notes.trim(),
-        canPhotograph: form.canPhotograph,
-        modelStatus: form.modelStatus,
         storedValueBalance: Number(form.storedValueBalance) || 0,
+        customFields: form.customFields,
         firstVisitDate: todayISO(),
         reminderSentFor: '',
       });
@@ -984,23 +976,15 @@ function CustomerFormModal({ data, customer, onClose, onSave, onDelete }) {
         </select>
       </Field>
 
-      <Field label="拍照意願">
-        <div className="pill-group">
-          {PHOTO_CONSENT_OPTIONS.map((o) => (
-            <button key={o.id} type="button" className={'pill' + (form.canPhotograph === o.id ? ' active' : '')} onClick={() => setForm({ ...form, canPhotograph: o.id })}>{o.label}</button>
-          ))}
-        </div>
-      </Field>
+      {customerFields.map((f) => (
+        <Field key={f.id} label={f.label + (f.required ? ' *' : '（選填）')}>
+          <input value={form.customFields[f.id] || ''} onChange={setCustomField(f.id)} />
+        </Field>
+      ))}
 
-      <Field label="品牌模特資格">
-        <div className="pill-group">
-          {MODEL_STATUS_OPTIONS.map((o) => (
-            <button key={o.id} type="button" className={'pill' + (form.modelStatus === o.id ? ' active' : '')} onClick={() => setForm({ ...form, modelStatus: o.id })}>{o.label}</button>
-          ))}
-        </div>
-      </Field>
+      <Field label="備註"><textarea rows={3} value={form.notes} onChange={set('notes')} placeholder="內部備註" /></Field>
 
-      <Field label="備註"><textarea rows={3} value={form.notes} onChange={set('notes')} placeholder="內部備註，例如拍照條件、特殊狀況等" /></Field>
+      {error && <p style={{ color: '#b56f65', fontSize: 13 }}>{error}</p>}
 
       <div className="modal-actions">
         {customer && !confirmingDelete && (
@@ -1070,14 +1054,14 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
       </div>
 
       <div className="panel notes-panel">
-        <div className="notes-tags">
-          <span className={'tag tag-photo-' + (customer.canPhotograph || 'unset')}>
-            {customer.canPhotograph === 'yes' ? '可以拍照' : customer.canPhotograph === 'no' ? '不可拍照' : '拍照意願未確認'}
-          </span>
-          <span className={'tag tag-model-' + (customer.modelStatus || 'unset')}>
-            {customer.modelStatus === 'active' ? '模特資格中' : customer.modelStatus === 'inactive' ? '已取消模特資格' : '非模特'}
-          </span>
-        </div>
+        {(store.customerFields || []).some((f) => (customer.customFields || {})[f.id]) && (
+          <div className="notes-tags">
+            {(store.customerFields || []).map((f) => {
+              const val = (customer.customFields || {})[f.id];
+              return val ? <span key={f.id} className="tag tag-custom">{f.label}：{val}</span> : null;
+            })}
+          </div>
+        )}
         <p className="notes-text">{customer.notes ? customer.notes : <span className="muted">還沒有備註，點「編輯客戶」新增</span>}</p>
       </div>
 
@@ -1473,22 +1457,21 @@ function CalendarView({ data, store, onAddRecord, onEditRecord, onDeleteRecord, 
    新增服務紀錄
    ============================================================ */
 
-function CustomerQuickPreview({ customer, records }) {
+function CustomerQuickPreview({ customer, records, store }) {
   const own = records.filter((r) => r.customerId === customer.id).sort((a, b) => (a.date < b.date ? 1 : -1));
   const recent = own.slice(0, 3);
+  const customerFields = store?.customerFields || [];
 
   return (
     <div className="quick-preview">
-      {(customer.canPhotograph !== 'unset' && customer.canPhotograph) || (customer.modelStatus !== 'unset' && customer.modelStatus) ? (
+      {customerFields.some((f) => (customer.customFields || {})[f.id]) && (
         <div className="notes-tags">
-          {customer.canPhotograph && customer.canPhotograph !== 'unset' && (
-            <span className={'tag tag-photo-' + customer.canPhotograph}>{customer.canPhotograph === 'yes' ? '可以拍照' : '不可拍照'}</span>
-          )}
-          {customer.modelStatus && customer.modelStatus !== 'unset' && (
-            <span className={'tag tag-model-' + customer.modelStatus}>{customer.modelStatus === 'active' ? '模特資格中' : '已取消模特資格'}</span>
-          )}
+          {customerFields.map((f) => {
+            const val = (customer.customFields || {})[f.id];
+            return val ? <span key={f.id} className="tag tag-custom">{f.label}：{val}</span> : null;
+          })}
         </div>
-      ) : null}
+      )}
 
       {customer.notes && <p className="quick-preview-notes">備註：{customer.notes}</p>}
 
@@ -1652,7 +1635,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
               <span className="muted small">{chosenCustomer.phone}</span>
               {!isEditing && <button className="text-link" onClick={() => setCustomerId('')}>更換</button>}
             </div>
-            <CustomerQuickPreview customer={chosenCustomer} records={data.records} />
+            <CustomerQuickPreview customer={chosenCustomer} records={data.records} store={store} />
           </>
         ) : (
           <>
@@ -1692,7 +1675,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
 
       <div className="field-row">
         <Field label="日期"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
-        <Field label="時間（預約可填，現場服務可留空）"><input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></Field>
+        <Field label="時間" hint="預約可填，現場服務可留空"><input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></Field>
       </div>
 
       <Field label="服務項目">
@@ -2305,10 +2288,7 @@ function GlobalStyles({ mobileNavOpen, primaryColor }) {
       .notes-panel { margin-bottom: 8px; }
       .notes-tags { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
       .tag { font-size: 11px; padding: 4px 10px; border-radius: 20px; background: var(--beige); color: var(--taupe); }
-      .tag-photo-yes { background: #E5EEE3; color: #5A7A54; }
-      .tag-photo-no { background: #F3E1DE; color: var(--alert); }
-      .tag-model-active { background: var(--beige); color: var(--rose-deep); font-weight: 600; }
-      .tag-model-inactive { background: #EFEFEF; color: var(--taupe); }
+      .tag-custom { background: var(--beige); color: var(--rose-deep); }
       .tag-deposit { display: inline-block; margin-top: 6px; background: #E5EEE3; color: #5A7A54; }
       .notes-text { font-size: 13px; line-height: 1.6; margin: 0; white-space: pre-wrap; }
     
@@ -2389,11 +2369,12 @@ function GlobalStyles({ mobileNavOpen, primaryColor }) {
       .modal-actions { margin-top: 6px; display: flex; gap: 10px; }
     
       .field { display: flex; flex-direction: column; gap: 6px; flex: 1; }
-      .field-row { display: flex; gap: 12px; }
+      .field-row { display: flex; gap: 12px; flex-wrap: wrap; }
+      .field-row > label { flex: 1 1 140px; min-width: 0; }
       .field-label { font-size: 12px; color: var(--taupe); }
       .field-hint { font-size: 11px; color: var(--taupe); }
       .field input, .field select, .field textarea {
-        font-family: inherit; font-size: 14px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--white); color: var(--brown); width: 100%;
+        font-family: inherit; font-size: 14px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--white); color: var(--brown); width: 100%; min-width: 0; box-sizing: border-box;
       }
       .field textarea { resize: vertical; }
       .fallback-textarea { width: 100%; font-family: inherit; font-size: 13px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--white); color: var(--brown); resize: vertical; margin: 10px 0; white-space: pre-wrap; }
@@ -2547,7 +2528,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
 
   const quickAddCustomer = async ({ name, phone, source }) => {
     const memberNo = nextMemberNo(data.customers);
-    const cust = { id: uid(), memberNo, name, phone, lineId: '', email: '', birthday: '', source: source || '其他', firstVisitDate: todayISO(), notes: '', canPhotograph: 'unset', modelStatus: 'unset', reminderSentFor: '' };
+    const cust = { id: uid(), memberNo, name, phone, lineId: '', email: '', birthday: '', source: source || '其他', firstVisitDate: todayISO(), notes: '', customFields: {}, reminderSentFor: '' };
     try {
       const saved = await apiSaveCustomer(cust, store.id);
       updateData((d) => { d.customers = [...d.customers, saved]; });
@@ -2769,6 +2750,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       {customerModal && (
         <CustomerFormModal
           data={data}
+          store={store}
           customer={customerModal === 'new' ? null : customerModal}
           onClose={() => setCustomerModal(null)}
           onSave={handleSaveCustomer}
