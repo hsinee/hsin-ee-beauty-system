@@ -1179,6 +1179,7 @@ function RevisitView({ data, store, onOpenCustomer, onMarkReminded }) {
         <div>
           <h2 className="serif">回訪提醒</h2>
           <p className="muted">最近一次服務滿 {REVISIT_ALERT_START_DAY} 天起，到優惠期限（{REVISIT_WINDOW_DAYS} 天）前顯示在這裡</p>
+          <p className="muted small">※ 超過 {REVISIT_WINDOW_DAYS} 天沒回訪的客人不會出現在這份名單，這是設計上的優惠倒數清單，不是「多久沒來都列出來」的名單</p>
         </div>
       </div>
 
