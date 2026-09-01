@@ -56,11 +56,12 @@ function uid() {
   });
 }
 
-const PRICE_TIERS = [
-  { id: 'normal', label: '原價' },
-  { id: 'trial', label: '首次體驗價' },
-  { id: 'brand', label: '品牌體驗價' },
-];
+// 價格方案不再寫死：改成每間店在「品牌設定」自己定義（store.priceTiers），
+// 適用任何美業項目，不假設一定要有「首次體驗價／品牌體驗價」這種分法。
+function tierLabel(priceTiers, tierId) {
+  const t = (priceTiers || []).find((x) => x.id === tierId);
+  return t ? t.label : (tierId || '');
+}
 
 // 新店家一開始服務項目是空的，由店家自己在「服務項目」頁新增，不繼承任何預設項目。
 function emptyData() {
@@ -673,7 +674,7 @@ function exportAllSystemData(data, store) {
         日期: r.date,
         時間: r.time || '',
         服務項目: r.serviceName,
-        價格方案: r.priceTier === 'trial' ? '首次體驗價' : r.priceTier === 'brand' ? '品牌體驗價' : '原價',
+        價格方案: tierLabel(store?.priceTiers, r.priceTier),
         原價: r.listPrice,
         折扣: r.discount || 0,
         服務金額: r.amount,
@@ -708,15 +709,14 @@ function exportAllSystemData(data, store) {
     XLSX.utils.book_append_sheet(wb, apptSheet, '預約紀錄');
   }
 
-  const serviceRows = data.services.map((s) => ({
-    項目名稱: s.name,
-    分類: s.category || '',
-    原價: s.priceNormal,
-    首次體驗價: s.priceFirstTrial,
-    品牌體驗價: s.priceBrandModel,
-    操作時間: s.duration,
-    狀態: s.active ? '啟用' : '停用',
-  }));
+  const priceTiers = store?.priceTiers || [{ id: 'default', label: '原價' }];
+  const serviceRows = data.services.map((s) => {
+    const row = { 項目名稱: s.name, 分類: s.category || '' };
+    priceTiers.forEach((t) => { row[t.label] = (s.prices || {})[t.id] ?? ''; });
+    row.操作時間 = s.duration;
+    row.狀態 = s.active ? '啟用' : '停用';
+    return row;
+  });
   const serviceSheet = XLSX.utils.json_to_sheet(serviceRows);
   XLSX.utils.book_append_sheet(wb, serviceSheet, '服務項目');
 
@@ -929,7 +929,7 @@ function CustomerFormModal({ data, customer, onClose, onSave, onDelete }) {
 }
 
 
-function CustomerDetail({ data, customerId, onBack, onAddRecord, onEditRecord, onDeleteRecord, onDeleteAppointment, onEditCustomer }) {
+function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRecord, onDeleteRecord, onDeleteAppointment, onEditCustomer }) {
   const customer = data.customers.find((c) => c.id === customerId);
   if (!customer) return null;
   const s = customerSummary(customer, data.records);
@@ -1022,9 +1022,9 @@ function CustomerDetail({ data, customerId, onBack, onAddRecord, onEditRecord, o
                 <div className="timeline-row">
                   <span className="strong">
                     {r.serviceName}
-                    {r.priceTier && r.priceTier !== 'normal' && (
+                    {r.priceTier && r.priceTier !== (store.priceTiers[0] && store.priceTiers[0].id) && (
                       <span className={'tier-tag tier-' + r.priceTier}>
-                        {r.priceTier === 'trial' ? '首次體驗價' : '品牌體驗價'}
+                        {tierLabel(store.priceTiers, r.priceTier)}
                       </span>
                     )}
                   </span>
@@ -1431,7 +1431,9 @@ function CustomerQuickPreview({ customer, records }) {
 
 const ADDON_TYPES = ['敷膜', '面膜', '購買產品', '其他'];
 
-function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQuickAddCustomer }) {
+function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSave, onQuickAddCustomer }) {
+  const priceTiers = store.priceTiers;
+  const trialTier = priceTiers.find((t) => t.trialDefault) || null;
   const isEditing = !!record;
   const [customerId, setCustomerId] = useState((record && record.customerId) || prefillCustomerId || '');
   const [customerQuery, setCustomerQuery] = useState('');
@@ -1445,7 +1447,7 @@ function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQu
   const [listPrice, setListPrice] = useState(record ? String(record.listPrice) : '');
   const [hasDiscount, setHasDiscount] = useState(record ? !!record.discount : false);
   const [discountAmount, setDiscountAmount] = useState(record && record.discount ? String(record.discount) : '');
-  const [priceTier, setPriceTier] = useState((record && record.priceTier) || 'normal');
+  const [priceTier, setPriceTier] = useState((record && record.priceTier) || priceTiers[0].id);
   const [paymentMethod, setPaymentMethod] = useState((record && record.paymentMethod) || PAYMENT_METHODS[0]);
   const [source, setSource] = useState((record && record.source) || '回訪');
   const [notes, setNotes] = useState((record && record.notes) || '');
@@ -1470,9 +1472,10 @@ function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQu
   }, [customerId, isFirstTime, data.records, record]);
 
   // 客人選定後，依「首次消費 / 老客人」自動預選合理的價格方案（編輯模式不覆蓋，因為方案已經存在紀錄裡）
+  // 只有店家有設定「首次體驗預設方案」時才會自動切到那個方案，沒設定的店就一律用第一個方案。
   useEffect(() => {
     if (!customerId || isEditing) return;
-    setPriceTier(isFirstTime ? 'trial' : 'normal');
+    setPriceTier(isFirstTime && trialTier ? trialTier.id : priceTiers[0].id);
   }, [customerId, isFirstTime, isEditing]);
 
   // 服務項目或價格方案改變時，自動帶入對應價格；編輯模式的第一次不覆蓋已存在的原始價格
@@ -1482,8 +1485,7 @@ function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQu
       priceAutoFillRef.current = true;
       return;
     }
-    const priceMap = { normal: selectedService.priceNormal, trial: selectedService.priceFirstTrial, brand: selectedService.priceBrandModel };
-    const val = priceMap[priceTier];
+    const val = (selectedService.prices || {})[priceTier];
     setListPrice(val !== undefined && val !== null ? String(val) : '');
   }, [serviceId, priceTier]);
 
@@ -1616,24 +1618,24 @@ function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQu
         </select>
       </Field>
 
-      {selectedService && (
+      {selectedService && priceTiers.length > 1 && (
         <Field label="價格方案">
           <div className="pill-group">
-            {PRICE_TIERS.map((t) => (
+            {priceTiers.map((t) => (
               <button
                 key={t.id}
                 type="button"
                 className={'pill' + (priceTier === t.id ? ' active' : '')}
                 onClick={() => setPriceTier(t.id)}
-              >{t.label}（{fmtMoney(selectedService[t.id === 'normal' ? 'priceNormal' : t.id === 'trial' ? 'priceFirstTrial' : 'priceBrandModel'])}）</button>
+              >{t.label}（{fmtMoney((selectedService.prices || {})[t.id])}）</button>
             ))}
           </div>
-          {isFirstTime && <span className="field-hint">首次消費，可選首次體驗價或品牌體驗價（模特招募）</span>}
+          {isFirstTime && <span className="field-hint">首次消費，請選擇合適的價格方案</span>}
           {!isFirstTime && daysSinceLast !== null && daysSinceLast <= REVISIT_WINDOW_DAYS && (
             <span className="field-hint">距離上次服務 {daysSinceLast} 天，仍在 6 週回訪優惠期內</span>
           )}
           {!isFirstTime && daysSinceLast !== null && daysSinceLast > REVISIT_WINDOW_DAYS && (
-            <span className="field-hint">距離上次服務 {daysSinceLast} 天，已超過 6 週，建議選原價</span>
+            <span className="field-hint">距離上次服務 {daysSinceLast} 天，已超過 6 週，建議選「{priceTiers[0].label}」</span>
           )}
         </Field>
       )}
@@ -1719,8 +1721,9 @@ function AddRecordModal({ data, prefillCustomerId, record, onClose, onSave, onQu
    服務項目管理
    ============================================================ */
 
-function ServicesView({ data, onSave, onDelete }) {
+function ServicesView({ data, store, onSave, onDelete }) {
   const [editing, setEditing] = useState(null); // service object or 'new'
+  const priceTiers = store.priceTiers;
 
   return (
     <div>
@@ -1736,7 +1739,9 @@ function ServicesView({ data, onSave, onDelete }) {
         <table className="data-table">
           <thead>
             <tr>
-              <th>項目</th><th>分類</th><th>原價</th><th>首次體驗價</th><th>品牌體驗價</th><th>時間</th><th>狀態</th><th></th>
+              <th>項目</th><th>分類</th>
+              {priceTiers.map((t) => <th key={t.id}>{t.label}</th>)}
+              <th>時間</th><th>狀態</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -1744,9 +1749,7 @@ function ServicesView({ data, onSave, onDelete }) {
               <tr key={s.id}>
                 <td className="strong">{s.name}</td>
                 <td>{s.category}</td>
-                <td>{fmtMoney(s.priceNormal)}</td>
-                <td>{fmtMoney(s.priceFirstTrial)}</td>
-                <td>{fmtMoney(s.priceBrandModel)}</td>
+                {priceTiers.map((t) => <td key={t.id}>{fmtMoney((s.prices || {})[t.id])}</td>)}
                 <td>{s.duration} 分</td>
                 <td>{s.active ? '啟用' : '停用'}</td>
                 <td>
@@ -1760,6 +1763,7 @@ function ServicesView({ data, onSave, onDelete }) {
 
       {editing && (
         <ServiceFormModal
+          store={store}
           service={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           onSave={(s) => { onSave(s); setEditing(null); }}
@@ -1770,38 +1774,46 @@ function ServicesView({ data, onSave, onDelete }) {
   );
 }
 
-function ServiceFormModal({ service, onClose, onSave, onDelete }) {
-  const [form, setForm] = useState(service || {
-    name: '', category: '', priceNormal: '', priceFirstTrial: '', priceBrandModel: '', duration: '', active: true,
+function ServiceFormModal({ store, service, onClose, onSave, onDelete }) {
+  const priceTiers = store.priceTiers;
+  const [name, setName] = useState(service?.name || '');
+  const [category, setCategory] = useState(service?.category || '');
+  const [prices, setPrices] = useState(() => {
+    const init = {};
+    priceTiers.forEach((t) => { init[t.id] = service?.prices?.[t.id] ?? ''; });
+    return init;
   });
-  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const [duration, setDuration] = useState(service?.duration ? String(service.duration) : '');
+  const [active, setActive] = useState(service ? service.active !== false : true);
+
+  const setPrice = (tierId) => (e) => setPrices({ ...prices, [tierId]: e.target.value });
 
   const submit = () => {
-    if (!form.name.trim()) return;
+    if (!name.trim()) return;
+    const priceValues = {};
+    priceTiers.forEach((t) => { priceValues[t.id] = Number(prices[t.id]) || 0; });
     onSave({
       id: service ? service.id : uid(),
-      name: form.name.trim(),
-      category: form.category.trim(),
-      priceNormal: Number(form.priceNormal) || 0,
-      priceFirstTrial: Number(form.priceFirstTrial) || 0,
-      priceBrandModel: Number(form.priceBrandModel) || 0,
-      duration: Number(form.duration) || 0,
-      active: form.active !== false,
+      name: name.trim(),
+      category: category.trim(),
+      prices: priceValues,
+      duration: Number(duration) || 0,
+      active,
     });
   };
 
   return (
     <Modal title={service ? '編輯服務項目' : '新增服務項目'} onClose={onClose}>
-      <Field label="項目名稱"><input value={form.name} onChange={set('name')} autoFocus /></Field>
-      <Field label="分類"><input value={form.category} onChange={set('category')} placeholder="例如：腿部 / 私密處" /></Field>
-      <Field label="原價" hint="一般客人、超過 6 週回訪時的價格"><input type="number" value={form.priceNormal} onChange={set('priceNormal')} /></Field>
-      <div className="field-row">
-        <Field label="首次體驗價" hint="一般新客首次體驗價"><input type="number" value={form.priceFirstTrial} onChange={set('priceFirstTrial')} /></Field>
-        <Field label="品牌體驗價" hint="體驗招募模特專用價"><input type="number" value={form.priceBrandModel} onChange={set('priceBrandModel')} /></Field>
-      </div>
-      <Field label="操作時間（分）"><input type="number" value={form.duration} onChange={set('duration')} /></Field>
+      <Field label="項目名稱"><input value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
+      <Field label="分類"><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="例如：腿部 / 臉部" /></Field>
+      {priceTiers.map((t) => (
+        <Field key={t.id} label={t.label}>
+          <input type="number" value={prices[t.id]} onChange={setPrice(t.id)} />
+        </Field>
+      ))}
+      <Field label="操作時間（分）"><input type="number" value={duration} onChange={(e) => setDuration(e.target.value)} /></Field>
       <label className="checkbox-row">
-        <input type="checkbox" checked={form.active !== false} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
+        <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
         啟用中（客人可預約 / 新增紀錄時可選擇）
       </label>
       <div className="modal-actions">
@@ -2585,6 +2597,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
           {view === 'customerDetail' && (
             <CustomerDetail
               data={data}
+              store={store}
               customerId={selectedCustomerId}
               onBack={() => setView('customers')}
               onAddRecord={(cid) => setAddRecordFor(cid)}
@@ -2613,7 +2626,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
             <RevisitView data={data} store={store} onOpenCustomer={openCustomer} onMarkReminded={handleMarkReminded} />
           )}
 
-          {view === 'services' && <ServicesView data={data} onSave={handleSaveService} onDelete={handleDeleteService} />}
+          {view === 'services' && <ServicesView data={data} store={store} onSave={handleSaveService} onDelete={handleDeleteService} />}
 
           {view === 'expenses' && <ExpensesView data={data} onSave={handleSaveExpense} onDelete={handleDeleteExpense} />}
 
@@ -2636,6 +2649,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       {addRecordFor && (
         <AddRecordModal
           data={data}
+          store={store}
           prefillCustomerId={addRecordFor === 'global' ? '' : addRecordFor}
           onClose={() => setAddRecordFor(null)}
           onSave={handleAddRecord}
@@ -2646,6 +2660,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       {editingRecord && (
         <AddRecordModal
           data={data}
+          store={store}
           record={editingRecord}
           onClose={() => setEditingRecord(null)}
           onSave={handleUpdateRecord}

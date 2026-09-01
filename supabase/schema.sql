@@ -18,8 +18,14 @@ create table if not exists stores (
   ig_handle text,
   line_id text,
   address text,
+  -- 價格方案清單，店家自己定義，適用任何美業項目（不是每間店都需要「首次體驗價/品牌體驗價」）。
+  -- 每個方案是 {id, label, trialDefault}，trialDefault 標記「新客首次消費預設帶入哪個方案」（可不設）。
+  price_tiers jsonb not null default '[{"id":"default","label":"原價"}]'::jsonb,
   created_at timestamptz default now()
 );
+
+-- 舊專案升級：補上新欄位（新專案這行不會有作用，因為上面 create table 已經包含）
+alter table stores add column if not exists price_tiers jsonb not null default '[{"id":"default","label":"原價"}]'::jsonb;
 
 create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -56,14 +62,20 @@ create table if not exists services (
   store_id uuid not null references stores(id) on delete cascade,
   name text not null,
   category text,
-  price_normal numeric not null default 0,
-  price_first_trial numeric not null default 0,
-  price_brand_model numeric not null default 0,
+  -- 每個服務的價格，key 對應 stores.price_tiers 裡的方案 id，例如 {"default": 399}
+  -- 或 {"normal": 399, "trial": 199}。方案數量、名稱完全由店家自訂，不寫死。
+  prices jsonb not null default '{}'::jsonb,
   duration_min integer,
   active boolean default true,
   created_at timestamptz default now()
 );
 create index if not exists services_store_idx on services (store_id);
+
+-- 舊專案升級：把舊的 3 個固定價格欄位換成彈性的 prices jsonb
+alter table services add column if not exists prices jsonb not null default '{}'::jsonb;
+alter table services drop column if exists price_normal;
+alter table services drop column if exists price_first_trial;
+alter table services drop column if exists price_brand_model;
 
 create table if not exists records (
   id uuid primary key default gen_random_uuid(),

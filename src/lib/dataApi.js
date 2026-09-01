@@ -47,9 +47,7 @@ export function serviceFromRow(row) {
     id: row.id,
     name: row.name,
     category: row.category || '',
-    priceNormal: Number(row.price_normal) || 0,
-    priceFirstTrial: Number(row.price_first_trial) || 0,
-    priceBrandModel: Number(row.price_brand_model) || 0,
+    prices: row.prices || {},
     duration: row.duration_min || '',
     active: row.active !== false,
   };
@@ -61,9 +59,7 @@ function serviceToRow(s, storeId) {
     store_id: storeId,
     name: s.name,
     category: s.category || null,
-    price_normal: Number(s.priceNormal) || 0,
-    price_first_trial: Number(s.priceFirstTrial) || 0,
-    price_brand_model: Number(s.priceBrandModel) || 0,
+    prices: s.prices || {},
     duration_min: s.duration ? Number(s.duration) : null,
     active: s.active !== false,
   };
@@ -156,6 +152,7 @@ function storeFromRow(row) {
     igHandle: row.ig_handle || '',
     lineId: row.line_id || '',
     address: row.address || '',
+    priceTiers: row.price_tiers && row.price_tiers.length ? row.price_tiers : [{ id: 'default', label: '原價' }],
   };
 }
 
@@ -213,6 +210,7 @@ export async function updateStore(storeId, patch) {
   if (patch.igHandle !== undefined) row.ig_handle = patch.igHandle;
   if (patch.lineId !== undefined) row.line_id = patch.lineId;
   if (patch.address !== undefined) row.address = patch.address;
+  if (patch.priceTiers !== undefined) row.price_tiers = patch.priceTiers;
   const { data, error } = await supabase.from('stores').update(row).eq('id', storeId).select().single();
   throwIfError(error);
   return storeFromRow(data);
