@@ -21,11 +21,15 @@ create table if not exists stores (
   -- 價格方案清單，店家自己定義，適用任何美業項目（不是每間店都需要「首次體驗價/品牌體驗價」）。
   -- 每個方案是 {id, label, trialDefault}，trialDefault 標記「新客首次消費預設帶入哪個方案」（可不設）。
   price_tiers jsonb not null default '[{"id":"default","label":"原價"}]'::jsonb,
+  -- 訊息範本清單，店家自己新增任意數量，每個是 {id, name, content}，content 可以用
+  -- {{姓名}} {{日期}} {{時間}} {{會員編號}} {{店名}} {{地址}} {{到期日}} 這些佔位符。
+  message_templates jsonb not null default '[]'::jsonb,
   created_at timestamptz default now()
 );
 
 -- 舊專案升級：補上新欄位（新專案這行不會有作用，因為上面 create table 已經包含）
 alter table stores add column if not exists price_tiers jsonb not null default '[{"id":"default","label":"原價"}]'::jsonb;
+alter table stores add column if not exists message_templates jsonb not null default '[]'::jsonb;
 
 create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,

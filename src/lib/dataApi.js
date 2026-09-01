@@ -153,6 +153,7 @@ function storeFromRow(row) {
     lineId: row.line_id || '',
     address: row.address || '',
     priceTiers: row.price_tiers && row.price_tiers.length ? row.price_tiers : [{ id: 'default', label: '原價' }],
+    messageTemplates: row.message_templates || [],
   };
 }
 
@@ -211,6 +212,7 @@ export async function updateStore(storeId, patch) {
   if (patch.lineId !== undefined) row.line_id = patch.lineId;
   if (patch.address !== undefined) row.address = patch.address;
   if (patch.priceTiers !== undefined) row.price_tiers = patch.priceTiers;
+  if (patch.messageTemplates !== undefined) row.message_templates = patch.messageTemplates;
   const { data, error } = await supabase.from('stores').update(row).eq('id', storeId).select().single();
   throwIfError(error);
   return storeFromRow(data);

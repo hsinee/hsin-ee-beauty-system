@@ -219,6 +219,67 @@ function KpiCard({ label, value, sub }) {
   );
 }
 
+function renderTemplate(content, vars) {
+  return (content || '').replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, key) => {
+    const v = vars[key];
+    return v !== undefined && v !== null ? String(v) : '';
+  });
+}
+
+// 共用的「複製訊息」按鈕：下拉列出店家在品牌設定自訂的所有範本，
+// 點哪個就依 vars 代入佔位符、複製到剪貼簿，不用切分頁。
+function TemplatePickerButton({ templates, vars, label }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [fallbackText, setFallbackText] = useState(null);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  const pick = async (t) => {
+    setOpen(false);
+    const msg = renderTemplate(t.content, vars);
+    const ok = await copyToClipboard(msg);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } else {
+      setFallbackText(msg);
+    }
+  };
+
+  if (!templates || templates.length === 0) {
+    return (
+      <button type="button" className="btn-secondary small" disabled title="請先到「品牌設定」新增訊息範本">
+        {label || '複製訊息'}
+      </button>
+    );
+  }
+
+  return (
+    <div className="template-picker" ref={wrapRef}>
+      <button type="button" className="btn-secondary small" onClick={() => setOpen((v) => !v)}>
+        {copied ? '已複製' : (label || '複製訊息')}
+      </button>
+      {open && (
+        <div className="template-menu">
+          {templates.map((t) => (
+            <button key={t.id} type="button" className="template-menu-item" onClick={() => pick(t)}>{t.name}</button>
+          ))}
+        </div>
+      )}
+      {fallbackText && <CopyFallbackModal text={fallbackText} onClose={() => setFallbackText(null)} />}
+    </div>
+  );
+}
+
 function CopyFallbackModal({ text, onClose }) {
   const textareaRef = useRef(null);
   useEffect(() => {
@@ -1075,20 +1136,6 @@ function computeRevisitList(data) {
 
 function RevisitView({ data, store, onOpenCustomer, onMarkReminded }) {
   const list = useMemo(() => computeRevisitList(data), [data]);
-  const [copiedId, setCopiedId] = useState('');
-  const [fallbackText, setFallbackText] = useState(null);
-
-  const copyMessage = async (item) => {
-    const expireDate = fmtDate(addDays(item.lastDate, REVISIT_WINDOW_DAYS));
-    const msg = `哈囉 ${item.customer.name}～提醒你上次到 ${store.name} 除毛後的回訪優惠到 ${expireDate} 就到期囉，要幫你保留時段嗎？`;
-    const ok = await copyToClipboard(msg);
-    if (ok) {
-      setCopiedId(item.customer.id);
-      setTimeout(() => setCopiedId(''), 1800);
-    } else {
-      setFallbackText(msg);
-    }
-  };
 
   return (
     <div>
@@ -1119,9 +1166,18 @@ function RevisitView({ data, store, onOpenCustomer, onMarkReminded }) {
                 <div className="muted small">天內優惠到期</div>
               </div>
               <div className="revisit-actions">
-                <button className="btn-secondary small" onClick={() => copyMessage(item)}>
-                  {copiedId === item.customer.id ? '已複製訊息' : '複製提醒訊息'}
-                </button>
+                <TemplatePickerButton
+                  templates={store.messageTemplates}
+                  vars={{
+                    姓名: item.customer.name,
+                    會員編號: item.customer.memberNo,
+                    日期: fmtDate(item.lastDate),
+                    店名: store.name,
+                    地址: store.address,
+                    到期日: fmtDate(addDays(item.lastDate, REVISIT_WINDOW_DAYS)),
+                  }}
+                  label="複製提醒訊息"
+                />
                 <button
                   className={'btn-secondary small' + (item.alreadyReminded ? ' active' : '')}
                   onClick={() => onMarkReminded(item.customer.id, item.lastDate, !item.alreadyReminded)}
@@ -1132,8 +1188,6 @@ function RevisitView({ data, store, onOpenCustomer, onMarkReminded }) {
           ))}
         </ul>
       )}
-
-      {fallbackText && <CopyFallbackModal text={fallbackText} onClose={() => setFallbackText(null)} />}
     </div>
   );
 }
@@ -1148,7 +1202,7 @@ const CALENDAR_PERIODS = [
   { id: 'month', label: '本月' },
 ];
 
-function AppointmentCardItem({ a, isCopied, onCopy, onToggleReminded, onDelete, onEdit, onOpenCustomer }) {
+function AppointmentCardItem({ a, store, onToggleReminded, onDelete, onEdit, onOpenCustomer }) {
   const upcoming = a.date >= todayISO();
   return (
     <li className={'appointment-card' + (a.source === 'record' && !upcoming ? ' is-record' : '')}>
@@ -1169,7 +1223,18 @@ function AppointmentCardItem({ a, isCopied, onCopy, onToggleReminded, onDelete, 
         {upcoming ? (
           <>
             {a.reminderSent && <span className="badge-reminded">已提醒</span>}
-            <button className="btn-secondary small" onClick={() => onCopy(a)}>{isCopied ? '已複製訊息' : '複製提醒訊息'}</button>
+            <TemplatePickerButton
+              templates={store.messageTemplates}
+              vars={{
+                姓名: a.customer.name,
+                會員編號: a.customer.memberNo,
+                日期: fmtDate(a.date),
+                時間: a.time || '',
+                店名: store.name,
+                地址: store.address,
+              }}
+              label="複製提醒訊息"
+            />
             <button className={'btn-secondary small' + (a.reminderSent ? ' active' : '')} onClick={() => onToggleReminded(a)}>
               {a.reminderSent ? '取消標記' : '標記已提醒'}
             </button>
@@ -1192,8 +1257,6 @@ function CalendarView({ data, store, onAddRecord, onEditRecord, onDeleteRecord, 
   const [period, setPeriod] = useState('week');
   const [monthCursor, setMonthCursor] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState(todayISO());
-  const [copiedId, setCopiedId] = useState('');
-  const [fallbackText, setFallbackText] = useState(null);
 
   const range = useMemo(() => {
     if (period === 'month') {
@@ -1232,24 +1295,6 @@ function CalendarView({ data, store, onAddRecord, onEditRecord, onDeleteRecord, 
   const grid = useMemo(() => buildMonthGrid(monthCursor), [monthCursor]);
   const monthLabel = monthCursor.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long' });
   const selectedList = grouped.find(([d]) => d === selectedDay)?.[1] || [];
-
-  const copyReminder = async (appt) => {
-    const addressBlock = store.address ? `⌂ 工作室地址\n${store.address}\n` : '';
-    const msg = `Hi🤍～
-提醒您明天 ${appt.time || ''} 在 ${store.name} 有預約唷！
-${addressBlock}( ˶ˊᵕˋ)੭ 前一天小提醒
-・請勿使用酸類保養品
-・請勿自行刮毛
-・保養前可以多補充水分 ♡
-明天見～期待為您服務 ( ˶ˆᗜˆ˵ )♡`;
-    const ok = await copyToClipboard(msg);
-    if (ok) {
-      setCopiedId(appt.id);
-      setTimeout(() => setCopiedId(''), 1800);
-    } else {
-      setFallbackText(msg);
-    }
-  };
 
   const handleToggle = (item) => {
     const fn = item.source === 'record' ? onToggleRecordReminded : onToggleAppointmentReminded;
@@ -1346,8 +1391,7 @@ ${addressBlock}( ˶ˊᵕˋ)੭ 前一天小提醒
                 <AppointmentCardItem
                   key={a.source + '-' + a.id}
                   a={a}
-                  isCopied={copiedId === a.id}
-                  onCopy={copyReminder}
+                  store={store}
                   onToggleReminded={handleToggle}
                   onDelete={handleDelete}
                   onEdit={(item) => onEditRecord(item)}
@@ -1369,8 +1413,7 @@ ${addressBlock}( ˶ˊᵕˋ)੭ 前一天小提醒
                   <AppointmentCardItem
                     key={a.source + '-' + a.id}
                     a={a}
-                    isCopied={copiedId === a.id}
-                    onCopy={copyReminder}
+                    store={store}
                     onToggleReminded={handleToggle}
                     onDelete={handleDelete}
                     onEdit={(item) => onEditRecord(item)}
@@ -1382,8 +1425,6 @@ ${addressBlock}( ˶ˊᵕˋ)੭ 前一天小提醒
           ))}
         </div>
       )}
-
-      {fallbackText && <CopyFallbackModal text={fallbackText} onClose={() => setFallbackText(null)} />}
     </div>
   );
 }
@@ -2181,6 +2222,20 @@ function GlobalStyles({ mobileNavOpen, primaryColor }) {
       .btn-secondary.active { background: var(--rose-deep); color: var(--white); border-color: var(--rose-deep); }
     
       .pill-group { display: flex; gap: 8px; flex-wrap: wrap; }
+
+      .template-picker { position: relative; display: inline-block; }
+      .template-menu {
+        position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
+        background: var(--white); border: 1px solid var(--line); border-radius: 6px;
+        box-shadow: 0 8px 24px rgba(74,59,50,0.14); min-width: 160px; max-width: 240px;
+        display: flex; flex-direction: column; padding: 4px; max-height: 240px; overflow-y: auto;
+      }
+      .template-menu-item {
+        text-align: left; background: none; border: none; font-family: inherit; font-size: 13px;
+        color: var(--brown); padding: 8px 10px; border-radius: 4px; cursor: pointer; white-space: nowrap;
+        overflow: hidden; text-overflow: ellipsis;
+      }
+      .template-menu-item:hover { background: var(--cream); }
       .pill { font-family: inherit; font-size: 12px; padding: 7px 14px; border-radius: 20px; border: 1px solid var(--line); background: var(--white); color: var(--taupe); cursor: pointer; }
       .pill.active { background: var(--rose-deep); border-color: var(--rose-deep); color: var(--white); }
     

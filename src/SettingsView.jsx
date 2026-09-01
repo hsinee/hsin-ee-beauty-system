@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 
-function newTierId() {
+function newId(prefix) {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-  return 'tier-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  return prefix + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 }
 
 function resizeImageToDataUrl(file, maxSize = 300) {
@@ -52,8 +52,9 @@ export default function SettingsView({ store, onSave }) {
   });
   const [logoUrl, setLogoUrl] = useState(store.logoUrl || '');
   const [priceTiers, setPriceTiers] = useState(
-    store.priceTiers && store.priceTiers.length ? store.priceTiers : [{ id: newTierId(), label: '原價' }]
+    store.priceTiers && store.priceTiers.length ? store.priceTiers : [{ id: newId('tier'), label: '原價' }]
   );
+  const [templates, setTemplates] = useState(store.messageTemplates || []);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -69,12 +70,25 @@ export default function SettingsView({ store, onSave }) {
     setSaved(false);
   };
   const addTier = () => {
-    setPriceTiers([...priceTiers, { id: newTierId(), label: '' }]);
+    setPriceTiers([...priceTiers, { id: newId('tier'), label: '' }]);
     setSaved(false);
   };
   const removeTier = (id) => {
     if (priceTiers.length <= 1) return;
     setPriceTiers(priceTiers.filter((t) => t.id !== id));
+    setSaved(false);
+  };
+
+  const setTemplateField = (id, field, value) => {
+    setTemplates(templates.map((t) => (t.id === id ? { ...t, [field]: value } : t)));
+    setSaved(false);
+  };
+  const addTemplate = () => {
+    setTemplates([...templates, { id: newId('tpl'), name: '', content: '' }]);
+    setSaved(false);
+  };
+  const removeTemplate = (id) => {
+    setTemplates(templates.filter((t) => t.id !== id));
     setSaved(false);
   };
 
@@ -96,11 +110,13 @@ export default function SettingsView({ store, onSave }) {
       setError('至少要保留一個價格方案');
       return;
     }
+    const cleanedTemplates = templates.map((t) => ({ ...t, name: t.name.trim(), content: t.content.trim() })).filter((t) => t.name && t.content);
     setSaving(true);
     setError('');
     try {
-      await onSave({ ...form, logoUrl, priceTiers: cleanedTiers });
+      await onSave({ ...form, logoUrl, priceTiers: cleanedTiers, messageTemplates: cleanedTemplates });
       setPriceTiers(cleanedTiers);
+      setTemplates(cleanedTemplates);
       setSaved(true);
     } catch (err) {
       setError(err.message);
@@ -162,6 +178,41 @@ export default function SettingsView({ store, onSave }) {
           </div>
         ))}
         <button type="button" className="btn-secondary small" onClick={addTier}>+ 新增方案</button>
+      </div>
+
+      <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>
+        <div className="field-label" style={{ marginBottom: 4 }}>訊息範本</div>
+        <p className="muted small" style={{ marginBottom: 12 }}>
+          自己新增任意數量的範本，例如「預約提醒」「施作前注意事項」「施作後保養」「訂金通知」。
+          內容裡可以用這些變數，複製時會自動換成當下這位客人的資料：
+          <br />
+          <code>{'{{姓名}}'}</code> <code>{'{{日期}}'}</code> <code>{'{{時間}}'}</code>{' '}
+          <code>{'{{會員編號}}'}</code> <code>{'{{店名}}'}</code> <code>{'{{地址}}'}</code>{' '}
+          <code>{'{{到期日}}'}</code>（只有回訪提醒那裡才有值）
+        </p>
+        {templates.map((t) => (
+          <div key={t.id} style={{ border: '1px solid var(--line, #ded4cc)', borderRadius: 6, padding: 12, marginBottom: 10 }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              <input
+                value={t.name}
+                onChange={(e) => setTemplateField(t.id, 'name', e.target.value)}
+                placeholder="範本名稱，例如：預約提醒"
+                style={{ flex: '1 1 140px', minWidth: 0 }}
+              />
+              <button type="button" className="icon-btn ghost" onClick={() => removeTemplate(t.id)} title="刪除範本">
+                <Trash2 size={14} />
+              </button>
+            </div>
+            <textarea
+              rows={4}
+              value={t.content}
+              onChange={(e) => setTemplateField(t.id, 'content', e.target.value)}
+              placeholder={'例如：Hi {{姓名}}～提醒您明天 {{時間}} 有預約唷！地址：{{地址}}'}
+              style={{ width: '100%' }}
+            />
+          </div>
+        ))}
+        <button type="button" className="btn-secondary small" onClick={addTemplate}>+ 新增範本</button>
       </div>
 
       <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>
