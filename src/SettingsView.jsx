@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
-import { exportBackup, restoreFromBackup } from './lib/dataApi.js';
+import { exportBackup, restoreFromBackup, verifyPin, updateStore } from './lib/localStore.js';
 
 function downloadJSON(filename, obj) {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
@@ -75,6 +75,26 @@ export default function SettingsView({ store, onSave }) {
   const [backupError, setBackupError] = useState('');
   const [backupDone, setBackupDone] = useState('');
   const fileInputRef = useRef(null);
+
+  const [currentPin, setCurrentPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confirmNewPin, setConfirmNewPin] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [pinDone, setPinDone] = useState('');
+
+  const handleChangePin = async (e) => {
+    e.preventDefault();
+    setPinError('');
+    setPinDone('');
+    if (!verifyPin(currentPin)) { setPinError('目前的 PIN 碼不正確'); return; }
+    if (!/^\d{4}$/.test(newPin)) { setPinError('新 PIN 碼請輸入 4 位數字'); return; }
+    if (newPin !== confirmNewPin) { setPinError('兩次輸入的新 PIN 碼不一致'); return; }
+    await updateStore(store.id, { pin: newPin });
+    setCurrentPin('');
+    setNewPin('');
+    setConfirmNewPin('');
+    setPinDone('PIN 碼已更新');
+  };
 
   const set = (k) => (e) => { setForm({ ...form, [k]: e.target.value }); setSaved(false); };
 
@@ -204,7 +224,7 @@ export default function SettingsView({ store, onSave }) {
           <input type="file" accept="image/*" onChange={handleLogoChange} />
         </Field>
         <Field label="品牌 / 店家名稱"><input value={form.name} onChange={set('name')} placeholder="例如：芯伊 HSIN.EE" /></Field>
-        <Field label="登入頁標題" hint="顯示在後台登入頁"><input value={form.loginTitle} onChange={set('loginTitle')} placeholder="例如：芯伊工作室後台" /></Field>
+        <Field label="後台副標題" hint="顯示在後台側邊欄 Logo 下方"><input value={form.loginTitle} onChange={set('loginTitle')} placeholder="例如：芯伊工作室後台" /></Field>
         <Field label="品牌主色">
           <input type="color" value={form.primaryColor} onChange={set('primaryColor')} style={{ width: 60, height: 34, padding: 2 }} />
         </Field>
@@ -300,6 +320,25 @@ export default function SettingsView({ store, onSave }) {
         </p>
         {backupError && <p style={{ color: '#b56f65', fontSize: 13 }}>{backupError}</p>}
         {backupDone && <p style={{ color: '#4c7a3f', fontSize: 13 }}>{backupDone}</p>}
+      </div>
+
+      <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>
+        <div className="field-label" style={{ marginBottom: 4 }}>PIN 碼</div>
+        <p className="muted small" style={{ marginBottom: 12 }}>更改進入後台用的 4 位數 PIN 碼，需要先輸入目前的 PIN 碼才能改。</p>
+        <form onSubmit={handleChangePin}>
+          {pinError && <p style={{ color: '#b56f65', fontSize: 13 }}>{pinError}</p>}
+          {pinDone && <p style={{ color: '#4c7a3f', fontSize: 13 }}>{pinDone}</p>}
+          <Field label="目前 PIN 碼">
+            <input inputMode="numeric" maxLength={4} value={currentPin} onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+          </Field>
+          <Field label="新 PIN 碼">
+            <input inputMode="numeric" maxLength={4} value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+          </Field>
+          <Field label="再輸入一次新 PIN 碼">
+            <input inputMode="numeric" maxLength={4} value={confirmNewPin} onChange={(e) => setConfirmNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+          </Field>
+          <button type="submit" className="btn-secondary small">更新 PIN 碼</button>
+        </form>
       </div>
 
       <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>

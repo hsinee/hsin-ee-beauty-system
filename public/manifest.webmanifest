@@ -1,9 +1,12 @@
 {
-  "name": "HSIN-EE Studio 營運管理系統",
-  "short_name": "HSIN-EE Studio",
+  "name": "美業工作室營運系統",
+  "short_name": "工作室後台",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#FBF7F2",
-  "theme_color": "#FBF7F2",
-  "lang": "zh-Hant"
+  "background_color": "#f1ebe5",
+  "theme_color": "#f1ebe5",
+  "lang": "zh-Hant",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
 }

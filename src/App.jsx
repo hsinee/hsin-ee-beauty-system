@@ -18,7 +18,7 @@ import {
   deleteRecord as apiDeleteRecord,
   saveExpense as apiSaveExpense,
   deleteExpense as apiDeleteExpense,
-} from './lib/dataApi.js';
+} from './lib/localStore.js';
 import SettingsView from './SettingsView.jsx';
 
 /* ============================================================
@@ -2696,7 +2696,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
             </li>
           ))}
         </ul>
-        <button className="logout-btn" onClick={onLogout}>登出</button>
+        <button className="logout-btn" onClick={onLogout}>鎖定</button>
       </aside>
 
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -2714,7 +2714,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
               <n.icon size={15} /> {n.label}
             </li>
           ))}
-          <li className="nav-item" onClick={onLogout}>登出</li>
+          <li className="nav-item" onClick={onLogout}>鎖定</li>
         </ul>
 
         <main className="main-area">
