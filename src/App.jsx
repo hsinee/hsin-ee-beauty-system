@@ -33,7 +33,6 @@ const REVISIT_WINDOW_DAYS = 42;
 const REVISIT_ALERT_START_DAY = 22;
 // 每個分類對應到固定成本／變動成本，用於毛利、淨利計算
 const EXPENSE_CATEGORIES = [
-  { name: '熱蠟耗材', type: 'variable' },
   { name: '耗材用品', type: 'variable' },
   { name: '保養產品', type: 'variable' },
   { name: '工作室房租', type: 'fixed' },

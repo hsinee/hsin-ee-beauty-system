@@ -141,12 +141,12 @@ export default function SettingsView({ store, onSave }) {
           需要「新客優惠價」之類邏輯的店家，可以多加方案，並勾選其中一個當作首次消費的預設方案。
         </p>
         {priceTiers.map((t) => (
-          <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <div key={t.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%' }}>
             <input
               value={t.label}
               onChange={(e) => setTierLabel(t.id, e.target.value)}
               placeholder="方案名稱，例如：原價"
-              style={{ flex: 1 }}
+              style={{ flex: '1 1 140px', minWidth: 0 }}
             />
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--taupe, #8f8178)', whiteSpace: 'nowrap' }}>
               <input type="radio" name="trialDefault" checked={!!t.trialDefault} onChange={() => setTrialDefault(t.id)} />
