@@ -1,18 +1,14 @@
-# HSIN-EE Studio System V5
+# HSIN.EE Studio System V5
 
-Vite + React version prepared for Vercel deployment.
+這是由提供的 JSX 程式整理成可直接放進 GitHub / Vercel 的 Vite + React 專案。
 
-## V5 fixes
-- Added the missing browser entry point (`src/main.jsx`).
-- Added Vite configuration.
-- Changed storage to use `localStorage` when `window.storage` is unavailable, while keeping compatibility with environments that provide `window.storage`.
-- Added a React Error Boundary so runtime errors no longer silently appear as a blank page.
+## 本機啟動
+```bash
+npm install
+npm run dev
+```
 
-## Deploy
-1. Upload this folder to GitHub.
-2. Import the repository into Vercel.
-3. Framework Preset: Vite.
-4. Build Command: `npm run build`.
-5. Output Directory: `dist`.
-
-No environment variables are required by this current source file.
+## 建置
+```bash
+npm run build
+```
