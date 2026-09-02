@@ -1996,10 +1996,10 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
           </div>
           <div className="addon-list">
             {storeProducts.map((p) => (
-              <div className="addon-row" key={p.id}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, flex: '1 1 140px' }}>
+              <div className="product-row" key={p.id}>
+                <label className="product-row-label">
                   <input type="checkbox" checked={!!productQtys[p.id]} onChange={() => toggleProduct(p.id)} />
-                  {p.name}（{fmtMoney(p.price)}）
+                  <span>{p.name}（{fmtMoney(p.price)}）</span>
                 </label>
                 {productQtys[p.id] ? (
                   <input
@@ -2007,7 +2007,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
                     min="1"
                     value={productQtys[p.id]}
                     onChange={(e) => setProductQty(p.id, e.target.value)}
-                    style={{ width: 60 }}
+                    className="product-row-qty"
                   />
                 ) : null}
               </div>
@@ -2559,6 +2559,10 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       .addon-list { display: flex; flex-direction: column; gap: 8px; }
       .addon-row { display: grid; grid-template-columns: 100px 1fr 90px auto; gap: 6px; align-items: center; }
       .addon-row select, .addon-row input { font-family: inherit; font-size: 13px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--white); color: var(--brown); }
+      .product-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+      .product-row-label { display: flex; align-items: center; gap: 6px; flex: 1 1 160px; min-width: 0; font-size: 13px; }
+      .product-row-label span { min-width: 0; overflow-wrap: break-word; }
+      .product-row-qty { width: 60px; flex: 0 0 60px; font-family: inherit; font-size: 13px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--white); color: var(--brown); box-sizing: border-box; }
     
       .revisit-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
       .revisit-card { display: flex; align-items: center; gap: 20px; background: var(--white); border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; flex-wrap: wrap; }
