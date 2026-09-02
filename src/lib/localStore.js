@@ -172,7 +172,11 @@ export async function deleteRecord(id) {
 }
 
 export async function saveExpense(expense) {
-  return withData((d) => { d.expenses = [...d.expenses, expense]; return expense; });
+  return withData((d) => {
+    const exists = d.expenses.some((e) => e.id === expense.id);
+    d.expenses = exists ? d.expenses.map((e) => (e.id === expense.id ? expense : e)) : [...d.expenses, expense];
+    return expense;
+  });
 }
 
 export async function deleteExpense(id) {

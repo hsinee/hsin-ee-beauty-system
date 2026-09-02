@@ -2199,7 +2199,7 @@ function ServiceFormModal({ store, service, onClose, onSave, onDelete }) {
    ============================================================ */
 
 function ExpensesView({ data, onSave, onDelete }) {
-  const [showAdd, setShowAdd] = useState(false);
+  const [expenseModal, setExpenseModal] = useState(null); // null | 'new' | expense object
   const [period, setPeriod] = useState('month');
   const [customStart, setCustomStart] = useState(todayISO());
   const [customEnd, setCustomEnd] = useState(todayISO());
@@ -2246,7 +2246,7 @@ function ExpensesView({ data, onSave, onDelete }) {
           <h2 className="serif">成本</h2>
           <p className="muted">累積支出 {fmtMoney(total)}</p>
         </div>
-        <button className="btn-primary" onClick={() => setShowAdd(true)}><Plus size={16} /> 新增支出</button>
+        <button className="btn-primary" onClick={() => setExpenseModal('new')}><Plus size={16} /> 新增支出</button>
       </div>
 
       <div className="period-tabs" style={{ marginBottom: 14 }}>
@@ -2341,7 +2341,10 @@ function ExpensesView({ data, onSave, onDelete }) {
                   <td>{e.item}</td>
                   <td>{fmtMoney(e.amount)}</td>
                   <td>{e.paymentMethod}</td>
-                  <td><button className="icon-btn ghost" onClick={() => onDelete(e.id)}><Trash2 size={14} /></button></td>
+                  <td>
+                    <button className="icon-btn ghost" onClick={() => setExpenseModal(e)}><Pencil size={14} /></button>
+                    <button className="icon-btn ghost" onClick={() => onDelete(e.id)}><Trash2 size={14} /></button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -2349,23 +2352,30 @@ function ExpensesView({ data, onSave, onDelete }) {
         </div>
       )}
 
-      {showAdd && <ExpenseFormModal onClose={() => setShowAdd(false)} onSave={(e) => { onSave(e); setShowAdd(false); }} />}
+      {expenseModal && (
+        <ExpenseFormModal
+          expense={expenseModal === 'new' ? null : expenseModal}
+          onClose={() => setExpenseModal(null)}
+          onSave={(e) => { onSave(e); setExpenseModal(null); }}
+        />
+      )}
     </div>
   );
 }
 
-function ExpenseFormModal({ onClose, onSave }) {
-  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0].name);
-  const [date, setDate] = useState(todayISO());
-  const [item, setItem] = useState('');
-  const [amount, setAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS[0]);
-  const [notes, setNotes] = useState('');
+function ExpenseFormModal({ expense, onClose, onSave }) {
+  const isEditing = !!expense;
+  const [category, setCategory] = useState(expense ? expense.category : EXPENSE_CATEGORIES[0].name);
+  const [date, setDate] = useState(expense ? expense.date : todayISO());
+  const [item, setItem] = useState(expense ? expense.item : '');
+  const [amount, setAmount] = useState(expense ? String(expense.amount) : '');
+  const [paymentMethod, setPaymentMethod] = useState(expense ? expense.paymentMethod : PAYMENT_METHODS[0]);
+  const [notes, setNotes] = useState(expense ? (expense.notes || '') : '');
 
   const submit = () => {
     if (!amount || Number(amount) <= 0) return;
     onSave({
-      id: uid(),
+      id: isEditing ? expense.id : uid(),
       category,
       type: expenseCategoryType(category),
       date,
@@ -2377,7 +2387,7 @@ function ExpenseFormModal({ onClose, onSave }) {
   };
 
   return (
-    <Modal title="新增支出" onClose={onClose}>
+    <Modal title={isEditing ? '編輯支出' : '新增支出'} onClose={onClose}>
       <Field label="分類">
         <select value={category} onChange={(e) => setCategory(e.target.value)}>
           {EXPENSE_CATEGORIES.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
@@ -2938,7 +2948,10 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
   const handleSaveExpense = async (exp) => {
     try {
       const saved = await apiSaveExpense(exp, store.id);
-      updateData((d) => { d.expenses = [...d.expenses, saved]; });
+      updateData((d) => {
+        const exists = d.expenses.some((e) => e.id === saved.id);
+        d.expenses = exists ? d.expenses.map((e) => (e.id === saved.id ? saved : e)) : [...d.expenses, saved];
+      });
     } catch (e) {
       reportError(e);
     }
