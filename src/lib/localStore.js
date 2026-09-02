@@ -41,7 +41,23 @@ function defaultStore() {
     lineId: '',
     address: '',
     priceTiers: [{ id: 'default', label: '原價' }],
-    messageTemplates: [],
+    messageTemplates: [
+      {
+        id: 'tpl-appointment-reminder',
+        name: '預約提醒',
+        content: 'Hi {{姓名}}您好，提醒您 {{日期}} {{時間}} 在{{店名}}有預約唷！地址：{{地址}}，如需更改時間歡迎與我們聯繫～',
+      },
+      {
+        id: 'tpl-revisit-reminder',
+        name: '回訪提醒',
+        content: 'Hi {{姓名}}，您上次到{{店名}}的服務已經有一段時間囉，優惠將在 {{到期日}} 到期，歡迎回來保養～有任何問題歡迎加LINE詢問：{{LINE}}',
+      },
+      {
+        id: 'tpl-payment-received',
+        name: '訂金/付款通知',
+        content: 'Hi {{姓名}}，已收到您的款項，期待 {{日期}} {{時間}} 為您服務！有任何問題歡迎聯繫電話 {{電話}} 或 LINE：{{LINE}}',
+      },
+    ],
     pin: '',
   };
 }

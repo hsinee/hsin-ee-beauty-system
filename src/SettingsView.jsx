@@ -19,6 +19,21 @@ function newId(prefix) {
   return prefix + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 }
 
+const STARTER_TEMPLATES = [
+  {
+    name: '預約提醒',
+    content: 'Hi {{姓名}}您好，提醒您 {{日期}} {{時間}} 在{{店名}}有預約唷！地址：{{地址}}，如需更改時間歡迎與我們聯繫～',
+  },
+  {
+    name: '回訪提醒',
+    content: 'Hi {{姓名}}，您上次到{{店名}}的服務已經有一段時間囉，優惠將在 {{到期日}} 到期，歡迎回來保養～有任何問題歡迎加LINE詢問：{{LINE}}',
+  },
+  {
+    name: '訂金/付款通知',
+    content: 'Hi {{姓名}}，已收到您的款項，期待 {{日期}} {{時間}} 為您服務！有任何問題歡迎聯繫電話 {{電話}} 或 LINE：{{LINE}}',
+  },
+];
+
 function resizeImageToDataUrl(file, maxSize = 300) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -220,6 +235,10 @@ export default function SettingsView({ store, onSave }) {
     setTemplates([...templates, { id: newId('tpl'), name: '', content: '' }]);
     setSaved(false);
   };
+  const applyStarterTemplates = () => {
+    setTemplates([...templates, ...STARTER_TEMPLATES.map((t) => ({ ...t, id: newId('tpl') }))]);
+    setSaved(false);
+  };
   const removeTemplate = (id) => {
     setTemplates(templates.filter((t) => t.id !== id));
     setSaved(false);
@@ -355,6 +374,7 @@ export default function SettingsView({ store, onSave }) {
           <br />
           <code>{'{{姓名}}'}</code> <code>{'{{日期}}'}</code> <code>{'{{時間}}'}</code>{' '}
           <code>{'{{會員編號}}'}</code> <code>{'{{店名}}'}</code> <code>{'{{地址}}'}</code>{' '}
+          <code>{'{{電話}}'}</code> <code>{'{{IG}}'}</code> <code>{'{{LINE}}'}</code>{' '}
           <code>{'{{到期日}}'}</code>（只有回訪提醒那裡才有值）
         </p>
         {templates.map((t) => (
@@ -379,7 +399,12 @@ export default function SettingsView({ store, onSave }) {
             />
           </div>
         ))}
-        <button type="button" className="btn-secondary small" onClick={addTemplate}>+ 新增範本</button>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button type="button" className="btn-secondary small" onClick={addTemplate}>+ 新增範本</button>
+          {templates.length === 0 && (
+            <button type="button" className="text-link" onClick={applyStarterTemplates}>套用範例範本，之後可以自己改</button>
+          )}
+        </div>
       </div>
 
       <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>

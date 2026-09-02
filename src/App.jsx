@@ -1195,6 +1195,9 @@ function RevisitView({ data, store, onOpenCustomer, onMarkReminded }) {
                     日期: fmtDate(item.lastDate),
                     店名: store.name,
                     地址: store.address,
+                    電話: store.phone,
+                    IG: store.igHandle,
+                    LINE: store.lineId,
                     到期日: fmtDate(addDays(item.lastDate, REVISIT_WINDOW_DAYS)),
                   }}
                   label="複製提醒訊息"
@@ -1256,6 +1259,9 @@ function AppointmentCardItem({ a, store, onToggleReminded, onDelete, onEdit, onO
                 時間: a.time || '',
                 店名: store.name,
                 地址: store.address,
+                電話: store.phone,
+                IG: store.igHandle,
+                LINE: store.lineId,
               }}
               label="複製提醒訊息"
             />
