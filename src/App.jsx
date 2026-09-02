@@ -2014,30 +2014,26 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
             ))}
           </div>
 
-          {selectedProducts.length > 0 && (
-            <>
-              <label className="checkbox-row">
-                <input type="checkbox" checked={hasProductDiscount} onChange={(e) => setHasProductDiscount(e.target.checked)} />
-                產品有折扣金額
-              </label>
-              {hasProductDiscount && (
-                <Field
-                  label="產品折扣金額"
-                  hint={store.discountPresetsEnabled ? '這裡的折扣只算在購買產品上，不影響服務金額' : undefined}
-                >
-                  {store.discountPresetsEnabled && (
-                    <div className="pill-group" style={{ marginBottom: 8 }}>
-                      {DISCOUNT_PRESETS.map((pct) => (
-                        <button key={pct} type="button" className="pill" onClick={() => applyProductDiscountPreset(pct)}>
-                          {pct / 10} 折
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <input type="number" value={productDiscountAmount} onChange={(e) => setProductDiscountAmount(e.target.value)} placeholder="0" />
-                </Field>
+          <label className="checkbox-row">
+            <input type="checkbox" checked={hasProductDiscount} onChange={(e) => setHasProductDiscount(e.target.checked)} />
+            產品有折扣金額
+          </label>
+          {hasProductDiscount && (
+            <Field
+              label="產品折扣金額"
+              hint={store.discountPresetsEnabled ? '這裡的折扣只算在購買產品上，不影響服務金額' : undefined}
+            >
+              {store.discountPresetsEnabled && (
+                <div className="pill-group" style={{ marginBottom: 8 }}>
+                  {DISCOUNT_PRESETS.map((pct) => (
+                    <button key={pct} type="button" className="pill" onClick={() => applyProductDiscountPreset(pct)}>
+                      {pct / 10} 折
+                    </button>
+                  ))}
+                </div>
               )}
-            </>
+              <input type="number" value={productDiscountAmount} onChange={(e) => setProductDiscountAmount(e.target.value)} placeholder="0" />
+            </Field>
           )}
         </div>
       )}
