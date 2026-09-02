@@ -58,6 +58,7 @@ export default function SettingsView({ store, onSave }) {
     name: store.name || '',
     loginTitle: store.loginTitle || '',
     primaryColor: store.primaryColor || '#c58f82',
+    backgroundColor: store.backgroundColor || '#f1ebe5',
     phone: store.phone || '',
     igHandle: store.igHandle || '',
     lineId: store.lineId || '',
@@ -245,8 +246,11 @@ export default function SettingsView({ store, onSave }) {
         </Field>
         <Field label="品牌 / 店家名稱"><input value={form.name} onChange={set('name')} placeholder="例如：芯伊 HSIN.EE" /></Field>
         <Field label="後台副標題" hint="顯示在後台側邊欄 Logo 下方"><input value={form.loginTitle} onChange={set('loginTitle')} placeholder="例如：芯伊工作室後台" /></Field>
-        <Field label="品牌主色">
+        <Field label="品牌主色" hint="按鈕、選單標示等強調色">
           <input type="color" value={form.primaryColor} onChange={set('primaryColor')} style={{ width: 60, height: 34, padding: 2 }} />
+        </Field>
+        <Field label="系統背景色" hint="整個後台的底色，建議選淺色，避免文字看不清楚">
+          <input type="color" value={form.backgroundColor} onChange={set('backgroundColor')} style={{ width: 60, height: 34, padding: 2 }} />
         </Field>
         <Field label="店家電話"><input value={form.phone} onChange={set('phone')} /></Field>
         <Field label="IG"><input value={form.igHandle} onChange={set('igHandle')} placeholder="@your_studio" /></Field>

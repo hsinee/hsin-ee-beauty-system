@@ -2131,15 +2131,16 @@ const NAV = [
   { id: 'settings', label: '品牌設定', icon: SettingsIcon },
 ];
 
-function GlobalStyles({ mobileNavOpen, primaryColor }) {
+function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
   const rose = primaryColor || '#c58f82';
+  const cream = backgroundColor || '#f1ebe5';
   return (
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;500;600;700&family=Noto+Sans+TC:wght@300;400;500;600;700&display=swap');
 
       .app-root {
-        --cream: #f1ebe5;
-        --beige: #f1ebe5;
+        --cream: ${cream};
+        --beige: ${cream};
         --rose: ${rose};
         --rose-deep: ${rose};
         --brown: #4a3b34;
@@ -2484,7 +2485,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
   if (loading || !data) {
     return (
       <div className="app-root">
-        <GlobalStyles mobileNavOpen={false} primaryColor={store.primaryColor} />
+        <GlobalStyles mobileNavOpen={false} primaryColor={store.primaryColor} backgroundColor={store.backgroundColor} />
         <div className="loading-screen">載入中⋯</div>
       </div>
     );
@@ -2493,7 +2494,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
   if (loadError) {
     return (
       <div className="app-root">
-        <GlobalStyles mobileNavOpen={false} primaryColor={store.primaryColor} />
+        <GlobalStyles mobileNavOpen={false} primaryColor={store.primaryColor} backgroundColor={store.backgroundColor} />
         <div className="loading-screen">資料載入失敗：{loadError}</div>
       </div>
     );
@@ -2664,7 +2665,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
 
   return (
     <div className="app-root">
-      <GlobalStyles mobileNavOpen={mobileNavOpen} primaryColor={store.primaryColor} />
+      <GlobalStyles mobileNavOpen={mobileNavOpen} primaryColor={store.primaryColor} backgroundColor={store.backgroundColor} />
 
       <aside className="sidebar">
         <div className="brand">

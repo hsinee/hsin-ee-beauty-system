@@ -34,6 +34,7 @@ function defaultStore() {
     name: '我的工作室',
     logoUrl: '',
     primaryColor: '#c58f82',
+    backgroundColor: '#f1ebe5',
     loginTitle: '工作室後台',
     phone: '',
     igHandle: '',
