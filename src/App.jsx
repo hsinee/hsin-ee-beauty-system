@@ -1618,11 +1618,17 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const productsSum = selectedProducts.reduce((s, p) => s + Number(p.price || 0) * Number(p.qty || 1), 0);
 
   const applyDiscountPreset = (pct) => {
-    setDiscountAmount(String(Math.round(Number(listPrice || 0) * (1 - pct / 100))));
+    // 折扣成數是抓「服務金額 + 購買產品」的總額一起算，不是只打服務項目的折扣，
+    // 這樣客人這次如果有帶產品回去，折扣才會反映在整筆金額上。
+    setDiscountAmount(String(Math.round((Number(listPrice || 0) + productsSum) * (1 - pct / 100))));
   };
 
-  const finalAmount = Math.max(0, Number(listPrice || 0) - (hasDiscount ? Number(discountAmount || 0) : 0));
-  const grandTotal = finalAmount + addonSum + productsSum;
+  // 折扣金額現在可能是抓「服務+產品」一起算出來的，理論上可能大於服務金額本身
+  // （例如服務便宜、產品比較貴的情況），所以總金額要用「服務+產品」整包去扣折扣，
+  // 不能只從服務金額扣，扣完才 clamp 到 0，這樣才不會少算。
+  const discountApplied = hasDiscount ? Math.min(Number(discountAmount || 0), Number(listPrice || 0) + productsSum) : 0;
+  const finalAmount = Math.max(0, Number(listPrice || 0) - discountApplied);
+  const grandTotal = Math.max(0, Number(listPrice || 0) + productsSum - discountApplied) + addonSum;
 
   const canSubmit = customerId && serviceId && listPrice !== '';
 
@@ -1637,7 +1643,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       serviceName: selectedService.name,
       listPrice: Number(listPrice),
       priceTier,
-      discount: hasDiscount ? Number(discountAmount || 0) : 0,
+      discount: discountApplied,
       amount: finalAmount,
       addons: addons
         .filter((a) => a.amount !== '' && Number(a.amount) > 0)
@@ -1792,26 +1798,6 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         </Field>
       )}
 
-      <label className="checkbox-row">
-        <input type="checkbox" checked={hasDiscount} onChange={(e) => setHasDiscount(e.target.checked)} />
-        這筆有折扣金額
-      </label>
-
-      {hasDiscount && (
-        <Field label="折扣金額" hint={store.discountPresetsEnabled ? '可以直接點折扣成數自動算，也能手動微調' : undefined}>
-          {store.discountPresetsEnabled && (
-            <div className="pill-group" style={{ marginBottom: 8 }}>
-              {DISCOUNT_PRESETS.map((pct) => (
-                <button key={pct} type="button" className="pill" onClick={() => applyDiscountPreset(pct)}>
-                  {pct / 10} 折
-                </button>
-              ))}
-            </div>
-          )}
-          <input type="number" value={discountAmount} onChange={(e) => setDiscountAmount(e.target.value)} placeholder="0" />
-        </Field>
-      )}
-
       {storeProducts.length > 0 && (
         <div className="addon-section">
           <div className="addon-header">
@@ -1837,6 +1823,29 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
             ))}
           </div>
         </div>
+      )}
+
+      <label className="checkbox-row">
+        <input type="checkbox" checked={hasDiscount} onChange={(e) => setHasDiscount(e.target.checked)} />
+        這筆有折扣金額
+      </label>
+
+      {hasDiscount && (
+        <Field
+          label="折扣金額"
+          hint={store.discountPresetsEnabled ? '折扣成數會抓「服務金額＋購買產品」一起算，也能手動微調' : undefined}
+        >
+          {store.discountPresetsEnabled && (
+            <div className="pill-group" style={{ marginBottom: 8 }}>
+              {DISCOUNT_PRESETS.map((pct) => (
+                <button key={pct} type="button" className="pill" onClick={() => applyDiscountPreset(pct)}>
+                  {pct / 10} 折
+                </button>
+              ))}
+            </div>
+          )}
+          <input type="number" value={discountAmount} onChange={(e) => setDiscountAmount(e.target.value)} placeholder="0" />
+        </Field>
       )}
 
       <div className="addon-section">
