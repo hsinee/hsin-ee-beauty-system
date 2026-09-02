@@ -41,6 +41,8 @@ function defaultStore() {
     lineId: '',
     address: '',
     priceTiers: [{ id: 'default', label: '原價' }],
+    products: [],
+    discountPresetsEnabled: false,
     messageTemplates: [
       {
         id: 'tpl-appointment-reminder',

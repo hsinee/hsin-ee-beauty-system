@@ -328,8 +328,11 @@ function CopyFallbackModal({ text, onClose }) {
 function addonsTotal(record) {
   return (record.addons || []).reduce((s, a) => s + Number(a.amount || 0), 0);
 }
+function productsTotal(record) {
+  return (record.products || []).reduce((s, p) => s + Number(p.price || 0) * Number(p.qty || 1), 0);
+}
 function recordTotal(record) {
-  return Number(record.amount || 0) + addonsTotal(record);
+  return Number(record.amount || 0) + addonsTotal(record) + productsTotal(record);
 }
 
 function computeCoreStats(data, range) {
@@ -485,14 +488,17 @@ function Dashboard({ data, store }) {
       .sort((a, b) => (a[0] < b[0] ? -1 : 1))
       .map(([k, v]) => ({ label: groupByMonth ? k.slice(2) : k.slice(5), value: v }));
 
-    // 服務項目營收（加購／商品另外歸成一類，讓總額跟營收對得起來）
+    // 服務項目營收（加購、產品銷售分別另外歸成一類，讓總額跟營收對得起來）
     const serviceMap = {};
     let addonRevenue = 0;
+    let productRevenue = 0;
     inRange.forEach((r) => {
       serviceMap[r.serviceName] = (serviceMap[r.serviceName] || 0) + Number(r.amount || 0);
       addonRevenue += addonsTotal(r);
+      productRevenue += productsTotal(r);
     });
-    if (addonRevenue > 0) serviceMap['加購／商品'] = addonRevenue;
+    if (addonRevenue > 0) serviceMap['加購'] = addonRevenue;
+    if (productRevenue > 0) serviceMap['產品銷售'] = productRevenue;
     const serviceRevenue = Object.entries(serviceMap)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8)
@@ -761,6 +767,8 @@ function exportAllSystemData(data, store) {
         服務金額: r.amount,
         加購項目: (r.addons || []).map((a) => `${a.type}${a.description ? '(' + a.description + ')' : ''} $${a.amount}`).join('、'),
         加購金額: addonsTotal(r),
+        購買產品: (r.products || []).map((p) => `${p.name} x${p.qty || 1} $${p.price}`).join('、'),
+        產品金額: productsTotal(r),
         總金額: recordTotal(r),
         付款方式: r.paymentMethod,
         付款狀態: paymentStatusLabel(r.paymentStatus),
@@ -1112,6 +1120,9 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
                 </div>
                 {r.addons && r.addons.length > 0 && (
                   <div className="muted small">加購：{r.addons.map((a) => `${a.type}${a.description ? '(' + a.description + ')' : ''} ${fmtMoney(a.amount)}`).join('、')}</div>
+                )}
+                {r.products && r.products.length > 0 && (
+                  <div className="muted small">購買產品：{r.products.map((p) => `${p.name} x${p.qty || 1} ${fmtMoney(p.price)}`).join('、')}</div>
                 )}
                 <div className="muted small">
                   付款：{r.paymentMethod}{r.paymentStatus ? `（${paymentStatusLabel(r.paymentStatus)}）` : ''}
@@ -1498,7 +1509,8 @@ function CustomerQuickPreview({ customer, records, store }) {
   );
 }
 
-const ADDON_TYPES = ['敷膜', '面膜', '購買產品', '其他'];
+const ADDON_TYPES = ['敷膜', '面膜', '其他'];
+const DISCOUNT_PRESETS = [95, 90, 85, 80, 75, 70];
 
 function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSave, onQuickAddCustomer }) {
   const priceTiers = store.priceTiers;
@@ -1521,6 +1533,11 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const [source, setSource] = useState((record && record.source) || '回訪');
   const [notes, setNotes] = useState((record && record.notes) || '');
   const [addons, setAddons] = useState((record && record.addons) || []);
+  const [productQtys, setProductQtys] = useState(() => {
+    const map = {};
+    (record && record.products || []).forEach((p) => { map[p.id] = p.qty || 1; });
+    return map;
+  });
   const [depositAmount, setDepositAmount] = useState(record && record.depositAmount ? String(record.depositAmount) : '');
   const [status, setStatus] = useState((record && record.status) || 'confirmed');
   const [paymentStatus, setPaymentStatus] = useState((record && record.paymentStatus) || 'paid_full');
@@ -1584,8 +1601,28 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   };
   const addonSum = addons.reduce((s, a) => s + Number(a.amount || 0), 0);
 
+  const storeProducts = store.products || [];
+  const toggleProduct = (id) => {
+    setProductQtys((prev) => {
+      const next = { ...prev };
+      if (next[id]) delete next[id]; else next[id] = 1;
+      return next;
+    });
+  };
+  const setProductQty = (id, qty) => {
+    setProductQtys((prev) => ({ ...prev, [id]: qty }));
+  };
+  const selectedProducts = storeProducts
+    .filter((p) => productQtys[p.id])
+    .map((p) => ({ id: p.id, name: p.name, price: p.price, qty: Number(productQtys[p.id]) || 1 }));
+  const productsSum = selectedProducts.reduce((s, p) => s + Number(p.price || 0) * Number(p.qty || 1), 0);
+
+  const applyDiscountPreset = (pct) => {
+    setDiscountAmount(String(Math.round(Number(listPrice || 0) * (1 - pct / 100))));
+  };
+
   const finalAmount = Math.max(0, Number(listPrice || 0) - (hasDiscount ? Number(discountAmount || 0) : 0));
-  const grandTotal = finalAmount + addonSum;
+  const grandTotal = finalAmount + addonSum + productsSum;
 
   const canSubmit = customerId && serviceId && listPrice !== '';
 
@@ -1605,6 +1642,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       addons: addons
         .filter((a) => a.amount !== '' && Number(a.amount) > 0)
         .map((a) => ({ id: a.id, type: a.type, description: a.description.trim(), amount: Number(a.amount) })),
+      products: selectedProducts,
       depositPaid: paymentStatus === 'deposit_only',
       depositAmount: paymentStatus === 'deposit_only' ? Number(depositAmount || 0) : 0,
       paymentMethod,
@@ -1760,14 +1798,50 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       </label>
 
       {hasDiscount && (
-        <Field label="折扣金額">
+        <Field label="折扣金額" hint={store.discountPresetsEnabled ? '可以直接點折扣成數自動算，也能手動微調' : undefined}>
+          {store.discountPresetsEnabled && (
+            <div className="pill-group" style={{ marginBottom: 8 }}>
+              {DISCOUNT_PRESETS.map((pct) => (
+                <button key={pct} type="button" className="pill" onClick={() => applyDiscountPreset(pct)}>
+                  {pct / 10} 折
+                </button>
+              ))}
+            </div>
+          )}
           <input type="number" value={discountAmount} onChange={(e) => setDiscountAmount(e.target.value)} placeholder="0" />
         </Field>
       )}
 
+      {storeProducts.length > 0 && (
+        <div className="addon-section">
+          <div className="addon-header">
+            <span className="field-label">購買產品（非加購）</span>
+          </div>
+          <div className="addon-list">
+            {storeProducts.map((p) => (
+              <div className="addon-row" key={p.id}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, flex: '1 1 140px' }}>
+                  <input type="checkbox" checked={!!productQtys[p.id]} onChange={() => toggleProduct(p.id)} />
+                  {p.name}（{fmtMoney(p.price)}）
+                </label>
+                {productQtys[p.id] ? (
+                  <input
+                    type="number"
+                    min="1"
+                    value={productQtys[p.id]}
+                    onChange={(e) => setProductQty(p.id, e.target.value)}
+                    style={{ width: 60 }}
+                  />
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="addon-section">
         <div className="addon-header">
-          <span className="field-label">加購項目（敷膜／面膜／購買產品等）</span>
+          <span className="field-label">加購項目（敷膜／面膜等）</span>
           <button type="button" className="text-link" onClick={addAddonLine}>+ 新增加購</button>
         </div>
         {addons.length > 0 && (
@@ -1789,6 +1863,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       <div className="final-amount-row breakdown">
         <div className="final-amount-line"><span className="muted">服務金額</span><span>{fmtMoney(finalAmount)}</span></div>
         {addonSum > 0 && <div className="final-amount-line"><span className="muted">加購金額</span><span>{fmtMoney(addonSum)}</span></div>}
+        {productsSum > 0 && <div className="final-amount-line"><span className="muted">產品金額</span><span>{fmtMoney(productsSum)}</span></div>}
         <div className="final-amount-line total"><span className="strong">總金額</span><span className="strong">{fmtMoney(grandTotal)}</span></div>
       </div>
 

@@ -78,11 +78,13 @@ export default function SettingsView({ store, onSave }) {
     igHandle: store.igHandle || '',
     lineId: store.lineId || '',
     address: store.address || '',
+    discountPresetsEnabled: !!store.discountPresetsEnabled,
   });
   const [logoUrl, setLogoUrl] = useState(store.logoUrl || '');
   const [priceTiers, setPriceTiers] = useState(
     store.priceTiers && store.priceTiers.length ? store.priceTiers : [{ id: newId('tier'), label: '原價' }]
   );
+  const [products, setProducts] = useState(store.products || []);
   const [templates, setTemplates] = useState(store.messageTemplates || []);
   const [customerFields, setCustomerFields] = useState(store.customerFields || []);
   const [saving, setSaving] = useState(false);
@@ -91,11 +93,8 @@ export default function SettingsView({ store, onSave }) {
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupError, setBackupError] = useState('');
   const [backupDone, setBackupDone] = useState('');
+  const [pendingImport, setPendingImport] = useState(null);
   const fileInputRef = useRef(null);
-  const settingsFileInputRef = useRef(null);
-  const [settingsImportBusy, setSettingsImportBusy] = useState(false);
-  const [settingsImportError, setSettingsImportError] = useState('');
-  const [settingsImportDone, setSettingsImportDone] = useState('');
 
   const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
@@ -118,6 +117,20 @@ export default function SettingsView({ store, onSave }) {
   };
 
   const set = (k) => (e) => { setForm({ ...form, [k]: e.target.value }); setSaved(false); };
+  const setChecked = (k) => (e) => { setForm({ ...form, [k]: e.target.checked }); setSaved(false); };
+
+  const setProductField = (id, field, value) => {
+    setProducts(products.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
+    setSaved(false);
+  };
+  const addProduct = () => {
+    setProducts([...products, { id: newId('prod'), name: '', price: '' }]);
+    setSaved(false);
+  };
+  const removeProduct = (id) => {
+    setProducts(products.filter((p) => p.id !== id));
+    setSaved(false);
+  };
 
   const handleExportBackup = async () => {
     setBackupBusy(true);
@@ -144,20 +157,26 @@ export default function SettingsView({ store, onSave }) {
     if (!file) return;
     setBackupError('');
     setBackupDone('');
-    let backup;
     try {
-      backup = JSON.parse(await file.text());
+      const backup = JSON.parse(await file.text());
+      if (!backup || (!backup.data && !backup.store)) throw new Error('empty');
+      setPendingImport(backup);
     } catch (err) {
       setBackupError('這個檔案不是有效的備份檔（JSON 格式錯誤）');
-      return;
     }
+  };
+
+  const cancelImport = () => setPendingImport(null);
+
+  const handleRestoreAll = async () => {
     const ok = window.confirm(
       '還原備份會刪除目前系統裡「這間店」所有的客戶、服務項目、服務紀錄、成本資料，改成備份檔裡的內容，動作無法復原。\n\n確定要繼續嗎？'
     );
     if (!ok) return;
     setBackupBusy(true);
     try {
-      await restoreFromBackup(store.id, backup);
+      await restoreFromBackup(store.id, pendingImport);
+      if (pendingImport.store) await restoreStoreSettings(store.id, pendingImport);
       setBackupDone('還原完成，頁面即將重新整理');
       setTimeout(() => window.location.reload(), 1200);
     } catch (err) {
@@ -166,29 +185,15 @@ export default function SettingsView({ store, onSave }) {
     }
   };
 
-  const handleImportSettingsClick = () => settingsFileInputRef.current?.click();
-
-  const handleImportSettingsFile = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setSettingsImportError('');
-    setSettingsImportDone('');
-    let backup;
+  const handleRestoreSettingsOnly = async () => {
+    setBackupBusy(true);
     try {
-      backup = JSON.parse(await file.text());
-    } catch (err) {
-      setSettingsImportError('這個檔案不是有效的備份檔（JSON 格式錯誤）');
-      return;
-    }
-    setSettingsImportBusy(true);
-    try {
-      await restoreStoreSettings(store.id, backup);
-      setSettingsImportDone('品牌設定已還原，頁面即將重新整理');
+      await restoreStoreSettings(store.id, pendingImport);
+      setBackupDone('品牌設定已還原（客戶資料未變動），頁面即將重新整理');
       setTimeout(() => window.location.reload(), 1200);
     } catch (err) {
-      setSettingsImportError(err.message);
-      setSettingsImportBusy(false);
+      setBackupError(err.message);
+      setBackupBusy(false);
     }
   };
 
@@ -264,13 +269,15 @@ export default function SettingsView({ store, onSave }) {
     }
     const cleanedTemplates = templates.map((t) => ({ ...t, name: t.name.trim(), content: t.content.trim() })).filter((t) => t.name && t.content);
     const cleanedCustomerFields = customerFields.map((f) => ({ ...f, label: f.label.trim() })).filter((f) => f.label);
+    const cleanedProducts = products.map((p) => ({ ...p, name: p.name.trim(), price: Number(p.price) || 0 })).filter((p) => p.name);
     setSaving(true);
     setError('');
     try {
-      await onSave({ ...form, logoUrl, priceTiers: cleanedTiers, messageTemplates: cleanedTemplates, customerFields: cleanedCustomerFields });
+      await onSave({ ...form, logoUrl, priceTiers: cleanedTiers, messageTemplates: cleanedTemplates, customerFields: cleanedCustomerFields, products: cleanedProducts });
       setPriceTiers(cleanedTiers);
       setTemplates(cleanedTemplates);
       setCustomerFields(cleanedCustomerFields);
+      setProducts(cleanedProducts);
       setSaved(true);
     } catch (err) {
       setError(err.message);
@@ -335,6 +342,50 @@ export default function SettingsView({ store, onSave }) {
           </div>
         ))}
         <button type="button" className="btn-secondary small" onClick={addTier}>+ 新增方案</button>
+
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--line, #ded4cc)' }}>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13 }}>
+            <input type="checkbox" checked={form.discountPresetsEnabled} onChange={setChecked('discountPresetsEnabled')} style={{ marginTop: 2 }} />
+            <span>
+              啟用折扣快速選擇（例如九折、八折）
+              <br />
+              <span className="muted small">開啟後，新增服務紀錄時可以直接選折扣成數自動算金額，不用自己按計算機。不需要打折的店家可以不用開啟。</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>
+        <div className="field-label" style={{ marginBottom: 4 }}>商品項目</div>
+        <p className="muted small" style={{ marginBottom: 12 }}>
+          店裡如果有賣保養品、工具等零售商品，可以先在這裡建好名稱和價格。之後新增服務紀錄時，
+          如果這位客人這次也順便買了商品，直接勾選就好，不用每次手動輸入金額，
+          而且會跟「加購」分開統計，方便你知道商品銷售額。
+        </p>
+        {products.map((p) => (
+          <div key={p.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%' }}>
+            <input
+              value={p.name}
+              onChange={(e) => setProductField(p.id, 'name', e.target.value)}
+              placeholder="商品名稱，例如：保濕精華"
+              style={{ flex: '1 1 140px', minWidth: 0 }}
+            />
+            <input
+              type="number"
+              value={p.price}
+              onChange={(e) => setProductField(p.id, 'price', e.target.value)}
+              placeholder="價格"
+              style={{ width: 90, minWidth: 0 }}
+            />
+            <button
+              type="button"
+              className="icon-btn ghost"
+              onClick={() => removeProduct(p.id)}
+              title="刪除商品"
+            ><Trash2 size={14} /></button>
+          </div>
+        ))}
+        <button type="button" className="btn-secondary small" onClick={addProduct}>+ 新增商品</button>
       </div>
 
       <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>
@@ -424,25 +475,33 @@ export default function SettingsView({ store, onSave }) {
           <input ref={fileInputRef} type="file" accept="application/json,.json" onChange={handleImportFile} style={{ display: 'none' }} />
         </div>
         <p className="muted small" style={{ color: '#b56f65' }}>
-          ⚠️ 匯入備份會刪除目前系統裡這間店現有的客戶／服務項目／服務紀錄／成本資料，改成備份檔的內容，無法復原，請小心操作。
+          ⚠️ 匯入備份預設會覆蓋目前系統裡這間店現有的客戶／服務項目／服務紀錄／成本資料，無法復原，請小心操作。
         </p>
         {backupError && <p style={{ color: '#b56f65', fontSize: 13 }}>{backupError}</p>}
         {backupDone && <p style={{ color: '#4c7a3f', fontSize: 13 }}>{backupDone}</p>}
 
-        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--line, #ded4cc)' }}>
-          <p className="muted small" style={{ marginBottom: 10 }}>
-            如果同一家店有多個進入方式（例如同時用瀏覽器分頁和主畫面圖示），兩邊資料是各自獨立的，
-            不會自動同步。這個按鈕只會把備份檔裡的「品牌設定」（店名／Logo／顏色／價格方案／訊息範本等）
-            套用過來，<strong>完全不會動到這個裝置上的客戶／服務／紀錄／成本資料</strong>，也不會改 PIN 碼，
-            可以放心用來把設定同步到另一邊。
-          </p>
-          <button type="button" className="btn-secondary small" onClick={handleImportSettingsClick} disabled={settingsImportBusy}>
-            {settingsImportBusy ? '處理中⋯' : '只匯入品牌設定（不影響客戶資料）'}
-          </button>
-          <input ref={settingsFileInputRef} type="file" accept="application/json,.json" onChange={handleImportSettingsFile} style={{ display: 'none' }} />
-          {settingsImportError && <p style={{ color: '#b56f65', fontSize: 13, marginTop: 8 }}>{settingsImportError}</p>}
-          {settingsImportDone && <p style={{ color: '#4c7a3f', fontSize: 13, marginTop: 8 }}>{settingsImportDone}</p>}
-        </div>
+        {pendingImport && (
+          <div style={{ marginTop: 12, padding: 12, background: 'var(--beige, #f1ebe5)', borderRadius: 6 }}>
+            <p className="muted small" style={{ marginBottom: 10 }}>
+              備份檔已讀取{pendingImport.exportedAt ? `（匯出時間：${new Date(pendingImport.exportedAt).toLocaleString()}）` : ''}，請選擇要還原的內容：
+            </p>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button type="button" className="btn-primary" onClick={handleRestoreAll} disabled={backupBusy}>
+                還原全部（含客戶資料，會覆蓋）
+              </button>
+              {pendingImport.store && (
+                <button type="button" className="btn-secondary small" onClick={handleRestoreSettingsOnly} disabled={backupBusy}>
+                  只還原品牌設定（不影響客戶資料）
+                </button>
+              )}
+              <button type="button" className="text-link" onClick={cancelImport} disabled={backupBusy}>取消</button>
+            </div>
+            <p className="muted small" style={{ marginTop: 8 }}>
+              「只還原品牌設定」適合同一家店在瀏覽器分頁和主畫面圖示上資料不同步的情況，
+              可以放心用，不會動到這個裝置上的客戶／服務／紀錄／成本資料，也不會改 PIN 碼。
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>
