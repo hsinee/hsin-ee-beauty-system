@@ -402,6 +402,12 @@ export default function SettingsView({ store, onSave }) {
           </button>
         </div>
       </div>
+
+      <p className="muted small" style={{ marginTop: 18, wordBreak: 'break-all' }}>
+        目前使用的網址：{typeof window !== 'undefined' ? window.location.origin : ''}
+        <br />
+        如果不同裝置／不同進入方式（主畫面圖示 vs. 瀏覽器分頁）看到的資料不一樣，先確認這裡顯示的網址是否一致。
+      </p>
     </div>
   );
 }
