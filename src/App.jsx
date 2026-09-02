@@ -2131,6 +2131,26 @@ const NAV = [
   { id: 'settings', label: '品牌設定', icon: SettingsIcon },
 ];
 
+function BrowserModeWarning() {
+  const [dismissed, setDismissed] = useState(() => {
+    try { return sessionStorage.getItem('beauty_system_browser_warning_dismissed') === '1'; } catch (e) { return false; }
+  });
+  const isStandalone = typeof window !== 'undefined' && (
+    window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone
+  );
+  if (isStandalone || dismissed) return null;
+  const dismiss = () => {
+    try { sessionStorage.setItem('beauty_system_browser_warning_dismissed', '1'); } catch (e) {}
+    setDismissed(true);
+  };
+  return (
+    <div style={{ background: '#fdf3e7', border: '1px solid #e8c9a0', color: '#8a5a2b', borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: 13, display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+      <span>⚠️ 你正在用「瀏覽器分頁」打開系統，這裡的資料跟手機主畫面圖示是各自獨立的兩份，不會自動同步。建議平常都用主畫面圖示操作，這裡只用來做品牌設定同步等特殊用途。</span>
+      <button type="button" onClick={dismiss} style={{ background: 'none', border: 'none', color: '#8a5a2b', cursor: 'pointer', fontSize: 13, flexShrink: 0, textDecoration: 'underline' }}>知道了</button>
+    </div>
+  );
+}
+
 function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
   const rose = primaryColor || '#c58f82';
   const cream = backgroundColor || '#f1ebe5';
@@ -2705,6 +2725,8 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
         </ul>
 
         <main className="main-area">
+          <BrowserModeWarning />
+
           {view === 'dashboard' && <Dashboard data={data} store={store} />}
 
           {view === 'customers' && (

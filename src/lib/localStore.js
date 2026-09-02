@@ -156,14 +156,16 @@ export async function deleteExpense(id) {
    完整資料備份／還原（JSON，供換裝置或自行留存用）
    ============================================================ */
 
-const BACKUP_VERSION = 1;
+const BACKUP_VERSION = 2;
 
 export async function exportBackup(store) {
   const data = loadJSON(DATA_KEY, emptyData());
+  const { id, pin, ...storeSettings } = store || {};
   return {
     backupVersion: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     storeName: store?.name || '',
+    store: storeSettings,
     data,
   };
 }
@@ -173,4 +175,15 @@ export async function restoreFromBackup(_storeId, backup) {
   if (!backup || !backup.data) throw new Error('備份檔格式不正確');
   const { customers = [], services = [], records = [], expenses = [] } = backup.data;
   saveJSON(DATA_KEY, { customers, services, records, expenses });
+}
+
+// 只還原品牌設定（店名／Logo／顏色／價格方案／訊息範本等），完全不動客戶／服務／紀錄／成本資料。
+// PIN 碼也不會被備份檔覆蓋，避免不同裝置互相鎖住彼此。
+export async function restoreStoreSettings(_storeId, backup) {
+  if (!backup || !backup.store) throw new Error('這份備份檔沒有品牌設定內容（可能是舊版備份檔）');
+  const current = loadJSON(STORE_KEY, defaultStore());
+  const { id, pin, ...incoming } = backup.store;
+  const updated = { ...current, ...incoming };
+  saveJSON(STORE_KEY, updated);
+  return updated;
 }

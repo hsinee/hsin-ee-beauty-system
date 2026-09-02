@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
-import { exportBackup, restoreFromBackup, verifyPin, updateStore } from './lib/localStore.js';
+import { exportBackup, restoreFromBackup, restoreStoreSettings, verifyPin, updateStore } from './lib/localStore.js';
 
 function downloadJSON(filename, obj) {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
@@ -77,6 +77,10 @@ export default function SettingsView({ store, onSave }) {
   const [backupError, setBackupError] = useState('');
   const [backupDone, setBackupDone] = useState('');
   const fileInputRef = useRef(null);
+  const settingsFileInputRef = useRef(null);
+  const [settingsImportBusy, setSettingsImportBusy] = useState(false);
+  const [settingsImportError, setSettingsImportError] = useState('');
+  const [settingsImportDone, setSettingsImportDone] = useState('');
 
   const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
@@ -144,6 +148,32 @@ export default function SettingsView({ store, onSave }) {
     } catch (err) {
       setBackupError(err.message);
       setBackupBusy(false);
+    }
+  };
+
+  const handleImportSettingsClick = () => settingsFileInputRef.current?.click();
+
+  const handleImportSettingsFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setSettingsImportError('');
+    setSettingsImportDone('');
+    let backup;
+    try {
+      backup = JSON.parse(await file.text());
+    } catch (err) {
+      setSettingsImportError('這個檔案不是有效的備份檔（JSON 格式錯誤）');
+      return;
+    }
+    setSettingsImportBusy(true);
+    try {
+      await restoreStoreSettings(store.id, backup);
+      setSettingsImportDone('品牌設定已還原，頁面即將重新整理');
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (err) {
+      setSettingsImportError(err.message);
+      setSettingsImportBusy(false);
     }
   };
 
@@ -373,6 +403,21 @@ export default function SettingsView({ store, onSave }) {
         </p>
         {backupError && <p style={{ color: '#b56f65', fontSize: 13 }}>{backupError}</p>}
         {backupDone && <p style={{ color: '#4c7a3f', fontSize: 13 }}>{backupDone}</p>}
+
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--line, #ded4cc)' }}>
+          <p className="muted small" style={{ marginBottom: 10 }}>
+            如果同一家店有多個進入方式（例如同時用瀏覽器分頁和主畫面圖示），兩邊資料是各自獨立的，
+            不會自動同步。這個按鈕只會把備份檔裡的「品牌設定」（店名／Logo／顏色／價格方案／訊息範本等）
+            套用過來，<strong>完全不會動到這個裝置上的客戶／服務／紀錄／成本資料</strong>，也不會改 PIN 碼，
+            可以放心用來把設定同步到另一邊。
+          </p>
+          <button type="button" className="btn-secondary small" onClick={handleImportSettingsClick} disabled={settingsImportBusy}>
+            {settingsImportBusy ? '處理中⋯' : '只匯入品牌設定（不影響客戶資料）'}
+          </button>
+          <input ref={settingsFileInputRef} type="file" accept="application/json,.json" onChange={handleImportSettingsFile} style={{ display: 'none' }} />
+          {settingsImportError && <p style={{ color: '#b56f65', fontSize: 13, marginTop: 8 }}>{settingsImportError}</p>}
+          {settingsImportDone && <p style={{ color: '#4c7a3f', fontSize: 13, marginTop: 8 }}>{settingsImportDone}</p>}
+        </div>
       </div>
 
       <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>
