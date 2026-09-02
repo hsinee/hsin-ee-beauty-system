@@ -11,6 +11,7 @@ import * as XLSX from 'xlsx';
 import {
   fetchStoreBundle,
   saveCustomer as apiSaveCustomer,
+  saveCustomersBulk as apiSaveCustomersBulk,
   deleteCustomer as apiDeleteCustomer,
   saveService as apiSaveService,
   deleteService as apiDeleteService,
@@ -141,6 +142,162 @@ function nextMemberNo(customers) {
     if (m) max = Math.max(max, parseInt(m[1], 10));
   });
   return 'W' + String(max + 1).padStart(3, '0');
+}
+
+/* ============================================================
+   既有客戶資料匯入（Excel／CSV 範本）
+   ============================================================ */
+
+const CUSTOMER_IMPORT_BASE_COLUMNS = ['姓名', '手機', 'LINE', 'Email', '生日', '得知來源', '備註', '儲值餘額'];
+
+function customerImportColumns(store) {
+  return [...CUSTOMER_IMPORT_BASE_COLUMNS, ...(store.customerFields || []).map((f) => f.label)];
+}
+
+function downloadCustomerImportTemplate(store) {
+  const cols = customerImportColumns(store);
+  const ws = XLSX.utils.aoa_to_sheet([cols]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '客戶名單');
+  XLSX.writeFile(wb, '客戶資料匯入範本.xlsx');
+}
+
+// Excel 日期儲存格讀進來可能是 JS Date 物件，其他情況（純文字欄位）就是字串，
+// 兩種都正規化成 YYYY-MM-DD，格式不對就乾脆留空，不硬擋匯入（生日不是必填欄位）。
+function normalizeImportedBirthday(value) {
+  if (!value) return '';
+  if (value instanceof Date && !isNaN(value)) return toLocalISO(value);
+  const s = String(value).trim().replace(/\//g, '-');
+  return /^\d{4}-\d{1,2}-\d{1,2}$/.test(s) ? s : '';
+}
+
+function parseCustomerImportRows(rows, store, existingCustomers) {
+  const customFields = store.customerFields || [];
+  let nextNum = parseInt(nextMemberNo(existingCustomers).slice(1), 10);
+  const valid = [];
+  const errors = [];
+
+  rows.forEach((row, idx) => {
+    const rowNo = idx + 2; // Excel 第一列是欄位標題
+    const name = String(row['姓名'] || '').trim();
+    const phone = String(row['手機'] || '').trim();
+    if (!name && !phone && Object.values(row).every((v) => !String(v || '').trim())) return; // 整列空白，跳過不算錯誤
+    if (!name || !phone) {
+      errors.push({ row: rowNo, reason: '姓名或手機空白' });
+      return;
+    }
+    const missingRequired = customFields.find((f) => f.required && !String(row[f.label] || '').trim());
+    if (missingRequired) {
+      errors.push({ row: rowNo, reason: `缺少必填欄位「${missingRequired.label}」` });
+      return;
+    }
+    const customFieldValues = {};
+    customFields.forEach((f) => { customFieldValues[f.id] = String(row[f.label] || '').trim(); });
+    valid.push({
+      id: uid(),
+      memberNo: 'W' + String(nextNum++).padStart(3, '0'),
+      name,
+      phone,
+      lineId: String(row['LINE'] || '').trim(),
+      email: String(row['Email'] || '').trim(),
+      birthday: normalizeImportedBirthday(row['生日']),
+      source: String(row['得知來源'] || '').trim() || '其他',
+      notes: String(row['備註'] || '').trim(),
+      storedValueBalance: Number(row['儲值餘額']) || 0,
+      customFields: customFieldValues,
+      firstVisitDate: '',
+      reminderSentFor: '',
+    });
+  });
+
+  return { valid, errors };
+}
+
+function CustomerImportModal({ store, data, onClose, onImport }) {
+  const fileInputRef = useRef(null);
+  const [fileName, setFileName] = useState('');
+  const [parsed, setParsed] = useState(null); // { valid, errors }
+  const [parseError, setParseError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setParseError('');
+    setParsed(null);
+    setFileName(file.name);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      setParsed(parseCustomerImportRows(rows, store, data.customers));
+    } catch (err) {
+      setParseError('這個檔案讀不出來，請確認是不是 .xlsx 或 .csv 檔');
+    }
+  };
+
+  const confirmImport = async () => {
+    if (!parsed || parsed.valid.length === 0) return;
+    setBusy(true);
+    try {
+      await onImport(parsed.valid);
+      setDone(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="匯入客戶資料" onClose={onClose}>
+      <p className="muted small" style={{ marginBottom: 12 }}>
+        適合原本已經有一批客戶名單、想一次搬進系統的情況。步驟：先下載範本，把既有的客戶資料貼進對應欄位，
+        存好後在這裡選檔案上傳。姓名和手機是必填，其他欄位可以留空。
+      </p>
+      <button type="button" className="btn-secondary small" onClick={() => downloadCustomerImportTemplate(store)} style={{ marginBottom: 14 }}>
+        下載匯入範本 (.xlsx)
+      </button>
+
+      {done ? (
+        <p style={{ color: '#4c7a3f', fontSize: 13 }}>
+          已成功匯入 {parsed.valid.length} 位客戶，關閉視窗就能在客戶列表看到。
+        </p>
+      ) : (
+        <>
+          <button type="button" className="btn-secondary small" onClick={() => fileInputRef.current?.click()} disabled={busy}>
+            選擇填好的檔案
+          </button>
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} style={{ display: 'none' }} />
+          {fileName && <p className="muted small" style={{ marginTop: 8 }}>已選擇：{fileName}</p>}
+          {parseError && <p style={{ color: '#b56f65', fontSize: 13, marginTop: 8 }}>{parseError}</p>}
+
+          {parsed && (
+            <div style={{ marginTop: 14 }}>
+              <p className="muted small">
+                共讀到 {parsed.valid.length + parsed.errors.length} 筆，可匯入 {parsed.valid.length} 筆
+                {parsed.errors.length > 0 ? `，有 ${parsed.errors.length} 筆資料不完整、不會匯入：` : '。'}
+              </p>
+              {parsed.errors.length > 0 && (
+                <ul className="muted small" style={{ margin: '6px 0 0 18px', maxHeight: 140, overflowY: 'auto' }}>
+                  {parsed.errors.slice(0, 20).map((e, i) => (
+                    <li key={i}>第 {e.row} 列：{e.reason}</li>
+                  ))}
+                  {parsed.errors.length > 20 && <li>...還有 {parsed.errors.length - 20} 筆</li>}
+                </ul>
+              )}
+              <div className="modal-actions" style={{ marginTop: 14 }}>
+                <button className="btn-primary full" onClick={confirmImport} disabled={busy || parsed.valid.length === 0}>
+                  {busy ? '匯入中⋯' : `確認匯入 ${parsed.valid.length} 位客戶`}
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </Modal>
+  );
 }
 
 function getRangeDates(period, customStart, customEnd) {
@@ -831,7 +988,7 @@ function exportAllSystemData(data, store) {
   XLSX.writeFile(wb, `${safeName}_全部資料_${todayISO()}.xlsx`);
 }
 
-function CustomersView({ data, onOpenCustomer, onAddCustomer, onEditCustomer }) {
+function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCustomer, onImportCustomers }) {
   const [q, setQ] = useState('');
 
   const filtered = useMemo(() => {
@@ -862,9 +1019,10 @@ function CustomersView({ data, onOpenCustomer, onAddCustomer, onEditCustomer }) 
           <p className="muted">共 {data.customers.length} 位客人</p>
         </div>
         <div className="button-group">
-          <button className="btn-secondary" onClick={() => exportAllSystemData(data)} disabled={data.customers.length === 0}>
+          <button className="btn-secondary" onClick={() => exportAllSystemData(data, store)} disabled={data.customers.length === 0}>
             <Download size={16} /> 匯出全部系統資料
           </button>
+          <button className="btn-secondary" onClick={onImportCustomers}>匯入客戶資料</button>
           <button className="btn-primary" onClick={onAddCustomer}><Plus size={16} /> 新增客戶</button>
         </div>
       </div>
@@ -2603,6 +2761,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
   const [view, setView] = useState('dashboard');
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [customerModal, setCustomerModal] = useState(null); // null | 'new' | customer object
+  const [showImportCustomers, setShowImportCustomers] = useState(false);
   const [addRecordFor, setAddRecordFor] = useState(null); // null | 'global' | customerId
   const [editingRecord, setEditingRecord] = useState(null); // null | record object
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -2659,6 +2818,11 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
     } catch (e) {
       reportError(e);
     }
+  };
+
+  const handleImportCustomers = async (customers) => {
+    await apiSaveCustomersBulk(customers, store.id);
+    updateData((d) => { d.customers = [...d.customers, ...customers]; });
   };
 
   const handleDeleteCustomer = async (id) => {
@@ -2856,7 +3020,14 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
           {view === 'dashboard' && <Dashboard data={data} store={store} />}
 
           {view === 'customers' && (
-            <CustomersView data={data} onOpenCustomer={openCustomer} onAddCustomer={() => setCustomerModal('new')} onEditCustomer={(c) => setCustomerModal(c)} />
+            <CustomersView
+              data={data}
+              store={store}
+              onOpenCustomer={openCustomer}
+              onAddCustomer={() => setCustomerModal('new')}
+              onEditCustomer={(c) => setCustomerModal(c)}
+              onImportCustomers={() => setShowImportCustomers(true)}
+            />
           )}
 
           {view === 'customerDetail' && (
@@ -2900,6 +3071,15 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       </div>
 
       <button className="fab" onClick={() => setAddRecordFor('global')}><Plus size={18} /> 新增服務</button>
+
+      {showImportCustomers && (
+        <CustomerImportModal
+          store={store}
+          data={data}
+          onClose={() => setShowImportCustomers(false)}
+          onImport={handleImportCustomers}
+        />
+      )}
 
       {customerModal && (
         <CustomerFormModal

@@ -131,6 +131,15 @@ export async function saveCustomer(customer) {
   });
 }
 
+// 批次匯入既有客戶名單用，一次把多筆新客戶寫進去，比逐筆呼叫 saveCustomer 少很多次
+// localStorage 寫入。
+export async function saveCustomersBulk(customers) {
+  return withData((d) => {
+    d.customers = [...d.customers, ...customers];
+    return customers;
+  });
+}
+
 export async function deleteCustomer(id) {
   withData((d) => {
     d.customers = d.customers.filter((c) => c.id !== id);
