@@ -2734,6 +2734,7 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
     
       .logout-btn { margin-top: 20px; width: 100%; background: none; border: 1px solid var(--line); border-radius: 6px; padding: 9px; font-family: inherit; font-size: 12px; color: var(--taupe); cursor: pointer; }
       .logout-btn:hover { color: var(--alert); border-color: var(--alert); }
+      .sidebar-copyright { margin-top: 10px; font-size: 10px; color: var(--taupe); text-align: center; opacity: 0.7; }
     
       @media (max-width: 860px) {
         .app-root { flex-direction: column; }
@@ -3008,6 +3009,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
           ))}
         </ul>
         <button className="logout-btn" onClick={onLogout}>鎖定</button>
+        <p className="sidebar-copyright">© {new Date().getFullYear()} HSIN.EE 網站. All Rights Reserved.</p>
       </aside>
 
       <div style={{ flex: 1, minWidth: 0 }}>

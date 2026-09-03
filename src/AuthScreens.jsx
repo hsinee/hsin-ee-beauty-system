@@ -49,19 +49,27 @@ export function AuthStyles() {
         width: 100%; text-align: center; letter-spacing: 0.6em; font-size: 26px; padding: 12px 10px 12px 16px;
         border: 1px solid #ded4cc; border-radius: 8px; font-family: inherit; background: #fff; color: #4a3b34;
       }
+      .auth-copyright { text-align: center; font-size: 11px; color: #b3a89c; margin-top: 18px; }
     `}</style>
   );
+}
+
+function AuthCopyright() {
+  return <p className="auth-copyright">© {new Date().getFullYear()} HSIN.EE 網站. All Rights Reserved.</p>;
 }
 
 function AuthLayout({ title, subtitle, children, logoUrl }) {
   return (
     <div className="auth-root">
       <AuthStyles />
-      <div className="auth-card">
-        {logoUrl && <img src={logoUrl} alt={title} style={{ width: 96, display: 'block', margin: '0 auto 16px' }} />}
-        <h1 className="auth-title">{title}</h1>
-        {subtitle && <p className="auth-subtitle">{subtitle}</p>}
-        {children}
+      <div style={{ width: '100%', maxWidth: 380 }}>
+        <div className="auth-card">
+          {logoUrl && <img src={logoUrl} alt={title} style={{ width: 96, display: 'block', margin: '0 auto 16px' }} />}
+          <h1 className="auth-title">{title}</h1>
+          {subtitle && <p className="auth-subtitle">{subtitle}</p>}
+          {children}
+        </div>
+        <AuthCopyright />
       </div>
     </div>
   );
