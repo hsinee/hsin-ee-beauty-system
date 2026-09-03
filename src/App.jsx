@@ -42,6 +42,7 @@ function recordStatusLabel(id) {
 }
 
 const PAYMENT_STATUS_OPTIONS = [
+  { id: 'pre_order', label: '預購' },
   { id: 'paid_full', label: '已付全款' },
   { id: 'deposit_only', label: '已付訂金' },
   { id: 'stored_value', label: '使用儲值扣款' },
