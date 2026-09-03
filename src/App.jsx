@@ -2509,7 +2509,7 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       .nav-item:hover { color: var(--brown); }
     
       /* ---- Main ---- */
-      .main-area { flex: 1; padding: 40px 44px; max-width: 1100px; }
+      .main-area { flex: 1; padding: 40px 44px 64px; max-width: 1100px; }
       .mobile-header { display: none; }
       .mobile-nav { display: none; }
     
@@ -2722,7 +2722,8 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       .timeline-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 14px; }
     
       /* ---- Floating add button ---- */
-      .fab { position: fixed; bottom: 28px; right: 28px; background: var(--rose-deep); color: var(--white); border: none; border-radius: 30px; padding: 14px 22px; font-family: inherit; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; box-shadow: 0 8px 20px rgba(74,59,50,0.25); cursor: pointer; z-index: 30; }
+      .fab { position: fixed; bottom: 52px; right: 28px; background: var(--rose-deep); color: var(--white); border: none; border-radius: 30px; padding: 14px 22px; font-family: inherit; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; box-shadow: 0 8px 20px rgba(74,59,50,0.25); cursor: pointer; z-index: 30; }
+      .app-footer { position: fixed; left: 0; right: 0; bottom: 0; margin: 0; padding: 6px 12px; text-align: center; font-size: 10px; color: var(--taupe); opacity: 0.8; background: var(--beige); border-top: 1px solid var(--line); z-index: 25; }
     
       .loading-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; font-family: 'Noto Serif TC', serif; color: var(--taupe); background: var(--cream); width: 100%; }
     
@@ -2734,7 +2735,6 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
     
       .logout-btn { margin-top: 20px; width: 100%; background: none; border: 1px solid var(--line); border-radius: 6px; padding: 9px; font-family: inherit; font-size: 12px; color: var(--taupe); cursor: pointer; }
       .logout-btn:hover { color: var(--alert); border-color: var(--alert); }
-      .sidebar-copyright { margin-top: 10px; font-size: 10px; color: var(--taupe); text-align: center; opacity: 0.7; }
     
       @media (max-width: 860px) {
         .app-root { flex-direction: column; }
@@ -2742,7 +2742,7 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
         .mobile-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; background: var(--beige); border-bottom: 1px solid var(--line); }
         .mobile-nav { display: ${mobileNavOpen ? 'flex' : 'none'}; flex-direction: column; background: var(--beige); border-bottom: 1px solid var(--line); }
         .mobile-nav .nav-item { padding: 14px 20px; border-top: 1px solid var(--line); }
-        .main-area { padding: 24px 18px 90px; }
+        .main-area { padding: 24px 18px 120px; }
         .kpi-grid, .kpi-grid.narrow { grid-template-columns: 1fr 1fr; }
         .chart-grid { grid-template-columns: 1fr; }
         .category-summary-grid { grid-template-columns: 1fr 1fr; }
@@ -3009,7 +3009,6 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
           ))}
         </ul>
         <button className="logout-btn" onClick={onLogout}>鎖定</button>
-        <p className="sidebar-copyright">© {new Date().getFullYear()} HSIN.EE 網站. All Rights Reserved.</p>
       </aside>
 
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -3087,6 +3086,8 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       </div>
 
       <button className="fab" onClick={() => setAddRecordFor('global')}><Plus size={18} /> 新增服務</button>
+
+      <p className="app-footer">© {new Date().getFullYear()} HSIN.EE 網站. All Rights Reserved.</p>
 
       {showImportCustomers && (
         <CustomerImportModal
