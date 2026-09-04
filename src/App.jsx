@@ -529,8 +529,9 @@ function computeCoreStats(data, range) {
   const variableCost = expInRange.filter((e) => e.type === 'variable').reduce((s, e) => s + Number(e.amount || 0), 0);
   const grossProfit = revenue - variableCost;
   const netProfit = grossProfit - fixedCost;
+  const totalExpense = fixedCost + variableCost;
 
-  return { inRange, revenue, visits, newCount: newCustomerIds.size, returningVisits, avgTicket, fixedCost, variableCost, grossProfit, netProfit };
+  return { inRange, revenue, visits, newCount: newCustomerIds.size, returningVisits, avgTicket, fixedCost, variableCost, grossProfit, netProfit, totalExpense };
 }
 
 function getCalendarRange(period) {
@@ -768,7 +769,7 @@ function Dashboard({ data, store }) {
         <KpiCard label="舊客回訪人次" value={stats.returningVisits} />
         <KpiCard label="平均客單價" value={fmtMoney(stats.avgTicket)} />
         <KpiCard label="累積回訪率" value={stats.retentionRate.toFixed(0) + '%'} sub="全歷史客人中，消費 ≥2 次的比例" />
-        <KpiCard label="期間毛利" value={fmtMoney(stats.grossProfit)} sub="營收－變動成本" />
+        <KpiCard label="期間總支出" value={fmtMoney(stats.totalExpense)} sub="固定成本＋變動成本" />
         <KpiCard label="期間淨利" value={fmtMoney(stats.netProfit)} sub="毛利－固定成本" />
       </div>
 
