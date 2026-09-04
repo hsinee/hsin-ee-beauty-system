@@ -52,9 +52,11 @@ function paymentStatusLabel(id) {
   return (PAYMENT_STATUS_OPTIONS.find((s) => s.id === id) || {}).label || id;
 }
 // 回訪優惠視窗：最近一次服務後 6 週（42 天）內回訪享優惠，
-// 從第 4 週開始（滿 22 天）就在「回訪提醒」列表跳出來，讓店家有時間主動聯繫
+// 滿 3 週（21 天）沒回訪就在「回訪提醒」列表跳出來，沒有上限，只要沒回訪就會一直在名單上。
+const REVISIT_ALERT_START_DAY = 21;
+// 訊息範本裡 {{到期日}} 這個變數沒有真正的到期日概念了，保留只是給已經在用這個變數的範本
+// 一個合理的參考日期（沿用舊版 6 週的邏輯），純粹是舊資料相容用途。
 const REVISIT_WINDOW_DAYS = 42;
-const REVISIT_ALERT_START_DAY = 22;
 // 每個分類對應到固定成本／變動成本，用於毛利、淨利計算
 const EXPENSE_CATEGORIES = [
   { name: '耗材用品', type: 'variable' },
@@ -1187,7 +1189,8 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
 }
 
 
-function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRecord, onDeleteRecord, onDeleteAppointment, onEditCustomer }) {
+function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRecord, onDeleteRecord, onDeleteAppointment, onEditCustomer, onAdjustBalance }) {
+  const [showAdjustBalance, setShowAdjustBalance] = useState(false);
   const customer = data.customers.find((c) => c.id === customerId);
   if (!customer) return null;
   const s = customerSummary(customer, data.records);
@@ -1230,7 +1233,12 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
         <KpiCard
           label="儲值餘額"
           value={fmtMoney(customer.storedValueBalance)}
-          sub={storedValueUsedTotal > 0 ? `目前紀錄裡共扣過 ${fmtMoney(storedValueUsedTotal)}` : undefined}
+          sub={
+            <>
+              {storedValueUsedTotal > 0 && <span>目前紀錄裡共扣過 {fmtMoney(storedValueUsedTotal)}　</span>}
+              <button type="button" className="text-link" onClick={() => setShowAdjustBalance(true)}>調整餘額</button>
+            </>
+          }
         />
         <KpiCard label="消費次數" value={s.count} />
         <KpiCard label="平均客單價" value={fmtMoney(s.count ? s.total / s.count : 0)} />
@@ -1323,12 +1331,49 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
           ))}
         </ul>
       )}
+
+      {showAdjustBalance && (
+        <AdjustBalanceModal
+          customer={customer}
+          onClose={() => setShowAdjustBalance(false)}
+          onSave={async (newBalance) => { await onAdjustBalance(customer.id, newBalance); setShowAdjustBalance(false); }}
+        />
+      )}
     </div>
   );
 }
 
+function AdjustBalanceModal({ customer, onClose, onSave }) {
+  const [value, setValue] = useState(String(customer.storedValueBalance || 0));
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await onSave(Number(value) || 0);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="調整儲值餘額" onClose={onClose}>
+      <p className="muted small" style={{ marginBottom: 12 }}>
+        目前餘額 {fmtMoney(customer.storedValueBalance)}。核對過帳目後，直接把下面改成正確的金額即可，
+        系統不會再自動重新計算，這裡填多少之後就是多少。
+      </p>
+      <Field label="新的儲值餘額">
+        <input type="number" value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+      </Field>
+      <div className="modal-actions">
+        <button className="btn-primary full" onClick={submit} disabled={busy}>{busy ? '儲存中⋯' : '儲存'}</button>
+      </div>
+    </Modal>
+  );
+}
+
 /* ============================================================
-   回訪提醒（6 週優惠倒數）
+   回訪提醒（滿 3 週沒回訪就提醒，沒有上限）
    ============================================================ */
 
 function computeRevisitList(data) {
@@ -1338,13 +1383,12 @@ function computeRevisitList(data) {
     if (own.length === 0) return;
     const lastDate = own[own.length - 1].date;
     const daysElapsed = daysBetween(lastDate, todayISO());
-    if (daysElapsed >= REVISIT_ALERT_START_DAY && daysElapsed <= REVISIT_WINDOW_DAYS) {
-      const daysRemaining = REVISIT_WINDOW_DAYS - daysElapsed;
+    if (daysElapsed >= REVISIT_ALERT_START_DAY) {
       const alreadyReminded = c.reminderSentFor === lastDate;
-      list.push({ customer: c, lastDate, daysElapsed, daysRemaining, alreadyReminded });
+      list.push({ customer: c, lastDate, daysElapsed, alreadyReminded });
     }
   });
-  list.sort((a, b) => a.daysRemaining - b.daysRemaining);
+  list.sort((a, b) => b.daysElapsed - a.daysElapsed);
   return list;
 }
 
@@ -1356,17 +1400,16 @@ function RevisitView({ data, store, onOpenCustomer, onMarkReminded }) {
       <div className="view-head">
         <div>
           <h2 className="serif">回訪提醒</h2>
-          <p className="muted">最近一次服務滿 {REVISIT_ALERT_START_DAY} 天起，到優惠期限（{REVISIT_WINDOW_DAYS} 天）前顯示在這裡</p>
-          <p className="muted small">※ 超過 {REVISIT_WINDOW_DAYS} 天沒回訪的客人不會出現在這份名單，這是設計上的優惠倒數清單，不是「多久沒來都列出來」的名單</p>
+          <p className="muted">最近一次服務滿 {REVISIT_ALERT_START_DAY} 天（3 週）起就會顯示在這裡，沒有回訪就會一直留著，直到客人回訪或手動標記已提醒</p>
         </div>
       </div>
 
       {list.length === 0 ? (
-        <EmptyHint text="目前沒有客人進入回訪優惠倒數期間" />
+        <EmptyHint text="目前沒有超過 3 週沒回訪的客人" />
       ) : (
         <ul className="revisit-list">
           {list.map((item) => (
-            <li key={item.customer.id} className={'revisit-card' + (item.daysRemaining <= 7 ? ' urgent' : '')}>
+            <li key={item.customer.id} className={'revisit-card' + (item.daysElapsed >= REVISIT_WINDOW_DAYS ? ' urgent' : '')}>
               <div className="revisit-main">
                 <div className="revisit-name-row">
                   <span className="strong">{item.customer.name}</span>
@@ -1377,8 +1420,8 @@ function RevisitView({ data, store, onOpenCustomer, onMarkReminded }) {
                 </div>
               </div>
               <div className="revisit-countdown">
-                <div className={'countdown-number' + (item.daysRemaining <= 7 ? ' urgent' : '')}>{item.daysRemaining}</div>
-                <div className="muted small">天內優惠到期</div>
+                <div className={'countdown-number' + (item.daysElapsed >= REVISIT_WINDOW_DAYS ? ' urgent' : '')}>{item.daysElapsed}</div>
+                <div className="muted small">天沒回訪</div>
               </div>
               <div className="revisit-actions">
                 <TemplatePickerButton
@@ -2866,6 +2909,18 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
     }
   };
 
+  // 手動微調儲值餘額（例如舊資料在修 bug 前累積算錯，店家自己核對後直接改成正確數字）。
+  const handleAdjustBalance = async (customerId, newBalance) => {
+    try {
+      const customer = data.customers.find((c) => c.id === customerId);
+      if (!customer) return;
+      const saved = await apiSaveCustomer({ ...customer, storedValueBalance: Number(newBalance) || 0 }, store.id);
+      updateData((d) => { d.customers = d.customers.map((c) => (c.id === saved.id ? saved : c)); });
+    } catch (e) {
+      reportError(e);
+    }
+  };
+
   const handleImportCustomers = async (customers) => {
     await apiSaveCustomersBulk(customers, store.id);
     updateData((d) => { d.customers = [...d.customers, ...customers]; });
@@ -3097,6 +3152,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
               onDeleteRecord={handleDeleteRecord}
               onDeleteAppointment={handleDeleteAppointment}
               onEditCustomer={(c) => setCustomerModal(c)}
+              onAdjustBalance={handleAdjustBalance}
             />
           )}
 
