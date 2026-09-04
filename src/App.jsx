@@ -493,6 +493,12 @@ function productsTotal(record) {
 function recordTotal(record) {
   return Number(record.amount || 0) + addonsTotal(record) + productsTotal(record);
 }
+// 這筆紀錄目前實際從客人儲值餘額扣了多少錢（沒有用儲值扣款就是 0）。
+// 新增/編輯/刪除紀錄時都要用「新舊差額」去調整餘額，不能每次都整筆再扣一次，
+// 不然改過的紀錄或刪除的紀錄會讓餘額對不起來。
+function storedValueImpact(record) {
+  return record && record.paymentStatus === 'stored_value' ? recordTotal(record) : 0;
+}
 
 function computeCoreStats(data, range) {
   const { records, expenses } = data;
@@ -1079,13 +1085,15 @@ function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCusto
 
 function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete }) {
   const customerFields = store.customerFields || [];
+  const knownSource = customer && (data.sources.includes(customer.source) ? customer.source : '其他');
   const [form, setForm] = useState(customer ? {
     name: customer.name, phone: customer.phone, lineId: customer.lineId || '',
-    email: customer.email || '', birthday: customer.birthday || '', source: customer.source,
+    email: customer.email || '', birthday: customer.birthday || '', source: knownSource,
+    otherSource: knownSource === '其他' && customer.source !== '其他' ? customer.source : '',
     notes: customer.notes || '',
     storedValueBalance: String(customer.storedValueBalance || 0),
     customFields: { ...(customer.customFields || {}) },
-  } : { name: '', phone: '', lineId: '', email: '', birthday: '', source: data.sources[0], notes: '', storedValueBalance: '0', customFields: {} });
+  } : { name: '', phone: '', lineId: '', email: '', birthday: '', source: data.sources[0], otherSource: '', notes: '', storedValueBalance: '0', customFields: {} });
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const setCustomField = (id) => (e) => setForm({ ...form, customFields: { ...form.customFields, [id]: e.target.value } });
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -1096,6 +1104,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
     const missing = customerFields.find((f) => f.required && !(form.customFields[f.id] || '').trim());
     if (missing) { setError(`「${missing.label}」是必填欄位`); return; }
     setError('');
+    const resolvedSource = form.source === '其他' && form.otherSource.trim() ? form.otherSource.trim() : form.source;
     if (customer) {
       onSave({
         ...customer,
@@ -1104,7 +1113,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
         lineId: form.lineId.trim(),
         email: form.email.trim(),
         birthday: form.birthday || '',
-        source: form.source,
+        source: resolvedSource,
         notes: form.notes.trim(),
         storedValueBalance: Number(form.storedValueBalance) || 0,
         customFields: form.customFields,
@@ -1119,7 +1128,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
         lineId: form.lineId.trim(),
         email: form.email.trim(),
         birthday: form.birthday || '',
-        source: form.source,
+        source: resolvedSource,
         notes: form.notes.trim(),
         storedValueBalance: Number(form.storedValueBalance) || 0,
         customFields: form.customFields,
@@ -1144,6 +1153,11 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
           {data.sources.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
       </Field>
+      {form.source === '其他' && (
+        <Field label="請說明其他來源（選填）">
+          <input value={form.otherSource} onChange={set('otherSource')} placeholder="例如：路過看到招牌" />
+        </Field>
+      )}
 
       {customerFields.map((f) => (
         <Field key={f.id} label={f.label + (f.required ? ' *' : '（選填）')}>
@@ -1694,7 +1708,15 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const [discountAmount, setDiscountAmount] = useState(record && record.discount ? String(record.discount) : '');
   const [priceTier, setPriceTier] = useState((record && record.priceTier) || priceTiers[0].id);
   const [paymentMethod, setPaymentMethod] = useState((record && record.paymentMethod) || PAYMENT_METHODS[0]);
-  const [source, setSource] = useState((record && record.source) || '回訪');
+  const [source, setSource] = useState(() => {
+    const s = record && record.source;
+    if (!s) return '回訪';
+    return data.sources.includes(s) ? s : '其他';
+  });
+  const [otherSource, setOtherSource] = useState(() => {
+    const s = record && record.source;
+    return s && s !== '回訪' && !data.sources.includes(s) ? s : '';
+  });
   const [notes, setNotes] = useState((record && record.notes) || '');
   const [addons, setAddons] = useState((record && record.addons) || []);
   const [productQtys, setProductQtys] = useState(() => {
@@ -1798,7 +1820,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const productsFinal = Math.max(0, productsSum - productDiscountApplied);
   const grandTotal = finalAmount + productsFinal + addonSum;
 
-  const canSubmit = customerId && serviceId && listPrice !== '';
+  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0);
 
   const submit = () => {
     if (!canSubmit) return;
@@ -1808,8 +1830,8 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       date,
       time,
       serviceId,
-      serviceName: selectedService.name,
-      listPrice: Number(listPrice),
+      serviceName: selectedService ? selectedService.name : '（僅購買產品）',
+      listPrice: serviceId ? Number(listPrice) : 0,
       priceTier,
       discount: discountApplied,
       amount: finalAmount,
@@ -1823,7 +1845,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       paymentMethod,
       status,
       paymentStatus,
-      source: isFirstTime ? source : '回訪',
+      source: isFirstTime ? (source === '其他' && otherSource.trim() ? otherSource.trim() : source) : '回訪',
       notes: notes.trim(),
       reminderSent: isEditing ? (record.reminderSent || false) : false,
     });
@@ -1903,7 +1925,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         </div>
       </Field>
 
-      <Field label="服務項目">
+      <Field label="服務項目" hint={storeProducts.length > 0 ? '只買產品、沒有服務項目的話可以留空' : undefined}>
         <select value={serviceId} onChange={(e) => selectService(e.target.value)}>
           <option value="">請選擇</option>
           {activeServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -2068,11 +2090,18 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       </div>
 
       {isFirstTime && (
-        <Field label="客戶來源" hint="這是這位客人的第一筆消費">
-          <select value={source} onChange={(e) => setSource(e.target.value)}>
-            {data.sources.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </Field>
+        <>
+          <Field label="客戶來源" hint="這是這位客人的第一筆消費">
+            <select value={source} onChange={(e) => setSource(e.target.value)}>
+              {data.sources.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+          {source === '其他' && (
+            <Field label="請說明其他來源（選填）">
+              <input value={otherSource} onChange={(e) => setOtherSource(e.target.value)} placeholder="例如：路過看到招牌" />
+            </Field>
+          )}
+        </>
       )}
 
       <Field label="備註"><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
@@ -2867,6 +2896,19 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
     }
   };
 
+  // 依「新舊差額」調整客人儲值餘額。newRecord 為 null 代表這筆紀錄被刪除了。
+  const applyStoredValueDelta = async (customerId, oldRecord, newRecord) => {
+    const delta = storedValueImpact(newRecord) - storedValueImpact(oldRecord);
+    if (delta === 0) return;
+    const customer = data.customers.find((c) => c.id === customerId);
+    if (!customer) return;
+    const updatedCustomer = await apiSaveCustomer(
+      { ...customer, storedValueBalance: (Number(customer.storedValueBalance) || 0) - delta },
+      store.id
+    );
+    updateData((d) => { d.customers = d.customers.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)); });
+  };
+
   const handleAddRecord = async (record) => {
     try {
       const saved = await apiSaveRecord(record, store.id);
@@ -2874,17 +2916,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
         const exists = d.records.some((r) => r.id === saved.id);
         d.records = exists ? d.records.map((r) => (r.id === saved.id ? saved : r)) : [...d.records, saved];
       });
-      // 用儲值扣款：新增當下直接從客人餘額扣掉這筆總金額（編輯既有紀錄不會重複扣）。
-      if (saved.paymentStatus === 'stored_value') {
-        const customer = data.customers.find((c) => c.id === saved.customerId);
-        if (customer) {
-          const updatedCustomer = await apiSaveCustomer(
-            { ...customer, storedValueBalance: (Number(customer.storedValueBalance) || 0) - recordTotal(saved) },
-            store.id
-          );
-          updateData((d) => { d.customers = d.customers.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)); });
-        }
-      }
+      await applyStoredValueDelta(saved.customerId, null, saved);
       setAddRecordFor(null);
     } catch (e) {
       reportError(e);
@@ -2893,8 +2925,10 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
 
   const handleUpdateRecord = async (record) => {
     try {
+      const oldRecord = data.records.find((r) => r.id === record.id);
       const saved = await apiSaveRecord(record, store.id);
       updateData((d) => { d.records = d.records.map((r) => (r.id === saved.id ? saved : r)); });
+      await applyStoredValueDelta(saved.customerId, oldRecord, saved);
       setEditingRecord(null);
     } catch (e) {
       reportError(e);
@@ -2903,8 +2937,10 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
 
   const handleDeleteRecord = async (id) => {
     try {
+      const record = data.records.find((r) => r.id === id);
       await apiDeleteRecord(id);
       updateData((d) => { d.records = d.records.filter((r) => r.id !== id); });
+      if (record) await applyStoredValueDelta(record.customerId, record, null);
     } catch (e) {
       reportError(e);
     }
