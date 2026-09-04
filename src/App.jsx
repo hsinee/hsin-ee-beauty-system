@@ -1191,6 +1191,7 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
   const customer = data.customers.find((c) => c.id === customerId);
   if (!customer) return null;
   const s = customerSummary(customer, data.records);
+  const storedValueUsedTotal = s.own.reduce((sum, r) => sum + storedValueImpact(r), 0);
 
   const upcoming = [
     ...s.own.filter((r) => r.date >= todayISO()).map((r) => ({ ...r, source: 'record' })),
@@ -1226,7 +1227,11 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
         <KpiCard label="近期消費日期" value={s.last ? fmtDate(s.last.date) : '—'} />
         <KpiCard label="生日" value={customer.birthday ? fmtDate(customer.birthday) : '未填寫'} />
         <KpiCard label="累積消費" value={fmtMoney(s.total)} />
-        <KpiCard label="儲值餘額" value={fmtMoney(customer.storedValueBalance)} />
+        <KpiCard
+          label="儲值餘額"
+          value={fmtMoney(customer.storedValueBalance)}
+          sub={storedValueUsedTotal > 0 ? `目前紀錄裡共扣過 ${fmtMoney(storedValueUsedTotal)}` : undefined}
+        />
         <KpiCard label="消費次數" value={s.count} />
         <KpiCard label="平均客單價" value={fmtMoney(s.count ? s.total / s.count : 0)} />
         <KpiCard
