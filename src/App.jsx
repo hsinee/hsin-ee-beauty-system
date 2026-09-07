@@ -1323,6 +1323,17 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
                   {r.notes ? ` ・ 備註：${r.notes}` : ''}
                 </div>
                 {r.depositPaid && <span className="tag tag-deposit">已收訂金 {fmtMoney(r.depositAmount || 0)}</span>}
+                {(r.signature || r.contractName) && (
+                  <div className="muted small" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                    {r.contractName && <span>已簽署：{r.contractName}</span>}
+                    {r.contractSnapshot && (
+                      <button type="button" className="text-link" onClick={() => alert(r.contractSnapshot)}>查看內容</button>
+                    )}
+                    {r.signature && (
+                      <img src={r.signature} alt="顧客簽名" style={{ height: 32, border: '1px solid var(--line)', borderRadius: 4, background: '#fff' }} />
+                    )}
+                  </div>
+                )}
               </div>
               <div className="timeline-actions">
                 <button className="icon-btn ghost" onClick={() => onEditRecord(r)}><Pencil size={14} /></button>
@@ -1739,6 +1750,88 @@ function CustomerQuickPreview({ customer, records, store }) {
 const ADDON_TYPES = ['敷膜', '面膜', '其他'];
 const DISCOUNT_PRESETS = [95, 90, 85, 80, 75, 70];
 
+// 簽名板：用 canvas 畫，簽完轉成小張 PNG 存進紀錄裡。用 Pointer Events 同時支援滑鼠跟觸控，
+// canvas 內部解析度固定 460x160，畫布顯示大小可能因為 CSS 被縮放，座標要換算回內部解析度，
+// 不然簽名會跑位。
+function SignaturePad({ initialValue, onChange }) {
+  const canvasRef = useRef(null);
+  const drawingRef = useRef(false);
+  const lastPosRef = useRef(null);
+  const hasDrawnRef = useRef(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (initialValue) {
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0);
+      img.src = initialValue;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const getPos = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  };
+
+  const handlePointerDown = (e) => {
+    e.preventDefault();
+    drawingRef.current = true;
+    hasDrawnRef.current = true;
+    lastPosRef.current = getPos(e);
+    canvasRef.current.setPointerCapture(e.pointerId);
+  };
+  const handlePointerMove = (e) => {
+    if (!drawingRef.current) return;
+    const ctx = canvasRef.current.getContext('2d');
+    const pos = getPos(e);
+    ctx.strokeStyle = '#4a3b34';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(lastPosRef.current.x, lastPosRef.current.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+    lastPosRef.current = pos;
+  };
+  const handlePointerUp = () => {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    if (hasDrawnRef.current) onChange(canvasRef.current.toDataURL('image/png'));
+  };
+
+  const clear = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    hasDrawnRef.current = false;
+    onChange('');
+  };
+
+  return (
+    <div>
+      <canvas
+        ref={canvasRef}
+        width={460}
+        height={160}
+        style={{ width: '100%', maxWidth: 460, height: 160, border: '1px solid var(--line, #ded4cc)', borderRadius: 6, background: '#fff', touchAction: 'none', cursor: 'crosshair', display: 'block' }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerUp}
+      />
+      <button type="button" className="text-link" onClick={clear} style={{ marginTop: 6 }}>清除重簽</button>
+    </div>
+  );
+}
+
 function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSave, onQuickAddCustomer }) {
   const priceTiers = store.priceTiers;
   const trialTier = priceTiers.find((t) => t.trialDefault) || null;
@@ -1782,6 +1875,10 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const activeServices = data.services.filter((s) => s.active);
   const selectedService = activeServices.find((s) => s.id === serviceId);
   const priceAutoFillRef = useRef(!isEditing); // 編輯模式下第一次不自動覆蓋已帶入的價格
+
+  const requiredContract = (store.contracts || []).find((c) => c.id === selectedService?.contractId);
+  const [signature, setSignature] = useState((record && record.signature) || '');
+  const [agreedToContract, setAgreedToContract] = useState(record ? !!record.contractId : false);
 
   const isFirstTime = useMemo(() => {
     if (!customerId) return false;
@@ -1869,7 +1966,8 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const productsFinal = Math.max(0, productsSum - productDiscountApplied);
   const grandTotal = finalAmount + productsFinal + addonSum;
 
-  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0);
+  const contractSatisfied = !requiredContract || (agreedToContract && !!signature);
+  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0) && contractSatisfied;
 
   const submit = () => {
     if (!canSubmit) return;
@@ -1897,6 +1995,10 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       source: isFirstTime ? (source === '其他' && otherSource.trim() ? otherSource.trim() : source) : '回訪',
       notes: notes.trim(),
       reminderSent: isEditing ? (record.reminderSent || false) : false,
+      signature: signature || '',
+      contractId: requiredContract ? requiredContract.id : '',
+      contractSnapshot: requiredContract ? requiredContract.content : '',
+      contractName: requiredContract ? requiredContract.name : '',
     });
   };
 
@@ -2155,6 +2257,25 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
 
       <Field label="備註"><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
 
+      {requiredContract && (
+        <div className="addon-section">
+          <div className="addon-header">
+            <span className="field-label">服務同意書：{requiredContract.name}</span>
+          </div>
+          <div style={{ border: '1px solid var(--line)', borderRadius: 6, padding: 12, maxHeight: 160, overflowY: 'auto', fontSize: 13, whiteSpace: 'pre-wrap', background: 'var(--white)' }}>
+            {requiredContract.content}
+          </div>
+          <label className="checkbox-row">
+            <input type="checkbox" checked={agreedToContract} onChange={(e) => setAgreedToContract(e.target.checked)} />
+            客戶已詳閱並同意上述內容
+          </label>
+          <Field label="顧客簽名" hint="請客人直接在下方用手指或滑鼠簽名">
+            <SignaturePad initialValue={signature} onChange={setSignature} />
+          </Field>
+          {!contractSatisfied && <p style={{ color: '#b56f65', fontSize: 13 }}>需要勾選同意並完成簽名才能送出</p>}
+        </div>
+      )}
+
       <div className="modal-actions">
         <button className="btn-primary full" disabled={!canSubmit} onClick={submit}>{isEditing ? '儲存修改' : '完成服務'}</button>
       </div>
@@ -2230,6 +2351,8 @@ function ServiceFormModal({ store, service, onClose, onSave, onDelete }) {
   });
   const [duration, setDuration] = useState(service?.duration ? String(service.duration) : '');
   const [active, setActive] = useState(service ? service.active !== false : true);
+  const [contractId, setContractId] = useState(service?.contractId || '');
+  const contracts = store.contracts || [];
 
   const setPrice = (tierId) => (e) => setPrices({ ...prices, [tierId]: e.target.value });
 
@@ -2244,6 +2367,7 @@ function ServiceFormModal({ store, service, onClose, onSave, onDelete }) {
       prices: priceValues,
       duration: Number(duration) || 0,
       active,
+      contractId,
     });
   };
 
@@ -2257,6 +2381,12 @@ function ServiceFormModal({ store, service, onClose, onSave, onDelete }) {
         </Field>
       ))}
       <Field label="操作時間（分）"><input type="number" value={duration} onChange={(e) => setDuration(e.target.value)} /></Field>
+      <Field label="需要簽署契約" hint="選了之後，新增這個服務的紀錄時會先顯示契約內容並要求客戶簽名">
+        <select value={contractId} onChange={(e) => setContractId(e.target.value)}>
+          <option value="">無</option>
+          {contracts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </Field>
       <label className="checkbox-row">
         <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
         啟用中（客人可預約 / 新增紀錄時可選擇）

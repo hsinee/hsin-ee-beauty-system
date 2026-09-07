@@ -86,6 +86,7 @@ export default function SettingsView({ store, onSave }) {
   );
   const [products, setProducts] = useState(store.products || []);
   const [templates, setTemplates] = useState(store.messageTemplates || []);
+  const [contracts, setContracts] = useState(store.contracts || []);
   const [customerFields, setCustomerFields] = useState(store.customerFields || []);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -249,6 +250,19 @@ export default function SettingsView({ store, onSave }) {
     setSaved(false);
   };
 
+  const setContractField = (id, field, value) => {
+    setContracts(contracts.map((c) => (c.id === id ? { ...c, [field]: value } : c)));
+    setSaved(false);
+  };
+  const addContract = () => {
+    setContracts([...contracts, { id: newId('contract'), name: '', content: '' }]);
+    setSaved(false);
+  };
+  const removeContract = (id) => {
+    setContracts(contracts.filter((c) => c.id !== id));
+    setSaved(false);
+  };
+
   const handleLogoChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -270,12 +284,14 @@ export default function SettingsView({ store, onSave }) {
     const cleanedTemplates = templates.map((t) => ({ ...t, name: t.name.trim(), content: t.content.trim() })).filter((t) => t.name && t.content);
     const cleanedCustomerFields = customerFields.map((f) => ({ ...f, label: f.label.trim() })).filter((f) => f.label);
     const cleanedProducts = products.map((p) => ({ ...p, name: p.name.trim(), price: Number(p.price) || 0 })).filter((p) => p.name);
+    const cleanedContracts = contracts.map((c) => ({ ...c, name: c.name.trim(), content: c.content.trim() })).filter((c) => c.name && c.content);
     setSaving(true);
     setError('');
     try {
-      await onSave({ ...form, logoUrl, priceTiers: cleanedTiers, messageTemplates: cleanedTemplates, customerFields: cleanedCustomerFields, products: cleanedProducts });
+      await onSave({ ...form, logoUrl, priceTiers: cleanedTiers, messageTemplates: cleanedTemplates, customerFields: cleanedCustomerFields, products: cleanedProducts, contracts: cleanedContracts });
       setPriceTiers(cleanedTiers);
       setTemplates(cleanedTemplates);
+      setContracts(cleanedContracts);
       setCustomerFields(cleanedCustomerFields);
       setProducts(cleanedProducts);
       setSaved(true);
@@ -456,6 +472,37 @@ export default function SettingsView({ store, onSave }) {
             <button type="button" className="text-link" onClick={applyStarterTemplates}>套用範例範本，之後可以自己改</button>
           )}
         </div>
+      </div>
+
+      <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>
+        <div className="field-label" style={{ marginBottom: 4 }}>契約範本</div>
+        <p className="muted small" style={{ marginBottom: 12 }}>
+          新增契約全文（例如同意書、注意事項聲明），存好後到「服務項目」編輯畫面，把需要的服務項目
+          連結到對應的契約。之後新增這個服務的紀錄時，會先顯示這份契約內容給客戶看，並要求客戶簽名才能完成。
+        </p>
+        {contracts.map((c) => (
+          <div key={c.id} style={{ border: '1px solid var(--line, #ded4cc)', borderRadius: 6, padding: 12, marginBottom: 10 }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              <input
+                value={c.name}
+                onChange={(e) => setContractField(c.id, 'name', e.target.value)}
+                placeholder="契約名稱，例如：熱蠟除毛服務同意書"
+                style={{ flex: '1 1 140px', minWidth: 0 }}
+              />
+              <button type="button" className="icon-btn ghost" onClick={() => removeContract(c.id)} title="刪除契約">
+                <Trash2 size={14} />
+              </button>
+            </div>
+            <textarea
+              rows={8}
+              value={c.content}
+              onChange={(e) => setContractField(c.id, 'content', e.target.value)}
+              placeholder="貼上完整契約內容⋯"
+              style={{ width: '100%' }}
+            />
+          </div>
+        ))}
+        <button type="button" className="btn-secondary small" onClick={addContract}>+ 新增契約</button>
       </div>
 
       <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>

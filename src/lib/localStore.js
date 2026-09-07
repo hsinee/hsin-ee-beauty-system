@@ -43,6 +43,7 @@ function defaultStore() {
     priceTiers: [{ id: 'default', label: '原價' }],
     products: [],
     discountPresetsEnabled: false,
+    contracts: [],
     messageTemplates: [
       {
         id: 'tpl-appointment-reminder',
