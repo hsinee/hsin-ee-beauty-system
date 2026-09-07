@@ -1088,6 +1088,7 @@ function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCusto
 
 function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete }) {
   const customerFields = store.customerFields || [];
+  const contracts = store.contracts || [];
   const knownSource = customer && (data.sources.includes(customer.source) ? customer.source : '其他');
   const [form, setForm] = useState(customer ? {
     name: customer.name, phone: customer.phone, lineId: customer.lineId || '',
@@ -1102,12 +1103,37 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState('');
 
+  // 服務同意書簽一次就好：簽名狀態存在客戶資料上，不是每次服務紀錄都要重簽
+  const [contractState, setContractState] = useState(() => {
+    const init = {};
+    contracts.forEach((c) => {
+      const existing = customer && customer.signedContracts && customer.signedContracts[c.id];
+      init[c.id] = { agreed: !!existing, signature: (existing && existing.signature) || '' };
+    });
+    return init;
+  });
+  const setContractAgreed = (id) => (e) => setContractState({ ...contractState, [id]: { ...contractState[id], agreed: e.target.checked } });
+  const setContractSignature = (id) => (sig) => setContractState({ ...contractState, [id]: { ...contractState[id], signature: sig } });
+
   const submit = () => {
     if (!form.name.trim() || !form.phone.trim()) { setError('姓名和手機是必填欄位'); return; }
     const missing = customerFields.find((f) => f.required && !(form.customFields[f.id] || '').trim());
     if (missing) { setError(`「${missing.label}」是必填欄位`); return; }
     setError('');
     const resolvedSource = form.source === '其他' && form.otherSource.trim() ? form.otherSource.trim() : form.source;
+    const signedContracts = {};
+    contracts.forEach((c) => {
+      const st = contractState[c.id];
+      if (st && st.agreed && st.signature) {
+        const existing = customer && customer.signedContracts && customer.signedContracts[c.id];
+        signedContracts[c.id] = {
+          name: c.name,
+          content: c.content,
+          signature: st.signature,
+          agreedAt: (existing && existing.agreedAt) || todayISO(),
+        };
+      }
+    });
     if (customer) {
       onSave({
         ...customer,
@@ -1120,6 +1146,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
         notes: form.notes.trim(),
         storedValueBalance: Number(form.storedValueBalance) || 0,
         customFields: form.customFields,
+        signedContracts,
       });
     } else {
       const memberNo = nextMemberNo(data.customers);
@@ -1135,6 +1162,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
         notes: form.notes.trim(),
         storedValueBalance: Number(form.storedValueBalance) || 0,
         customFields: form.customFields,
+        signedContracts,
         firstVisitDate: todayISO(),
         reminderSentFor: '',
       });
@@ -1169,6 +1197,30 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
       ))}
 
       <Field label="備註（選填）"><textarea rows={3} value={form.notes} onChange={set('notes')} placeholder="內部備註" /></Field>
+
+      {contracts.length > 0 && (
+        <>
+          <h4 className="panel-title" style={{ marginTop: 20 }}>服務同意書（選填）</h4>
+          <p className="muted small" style={{ marginTop: -8, marginBottom: 12 }}>簽過一次就好，之後這位客人做需要此同意書的服務時不用再重簽</p>
+          {contracts.map((c) => (
+            <div key={c.id} className="addon-section">
+              <div className="addon-header">
+                <span className="field-label">{c.name}</span>
+              </div>
+              <div style={{ border: '1px solid var(--line)', borderRadius: 6, padding: 12, maxHeight: 160, overflowY: 'auto', fontSize: 13, whiteSpace: 'pre-wrap', background: 'var(--white)' }}>
+                {c.content}
+              </div>
+              <label className="checkbox-row">
+                <input type="checkbox" checked={!!contractState[c.id]?.agreed} onChange={setContractAgreed(c.id)} />
+                客戶已詳閱並同意上述內容
+              </label>
+              <Field label="客戶簽名" hint="請客人直接在下方用手指或滑鼠簽名，確認同意契約內容">
+                <SignaturePad initialValue={contractState[c.id]?.signature || ''} onChange={setContractSignature(c.id)} />
+              </Field>
+            </div>
+          ))}
+        </>
+      )}
 
       {error && <p style={{ color: '#b56f65', fontSize: 13 }}>{error}</p>}
 
@@ -1261,6 +1313,28 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
         )}
         <p className="notes-text">{customer.notes ? customer.notes : <span className="muted">還沒有備註，點「編輯客戶」新增</span>}</p>
       </div>
+
+      {Object.keys(customer.signedContracts || {}).length > 0 && (
+        <>
+          <h4 className="panel-title" style={{ marginTop: 28 }}>服務同意書</h4>
+          <ul className="timeline">
+            {Object.entries(customer.signedContracts).map(([cid, c]) => (
+              <li key={cid} className="timeline-item">
+                <div className="timeline-date">{fmtDate(c.agreedAt)}</div>
+                <div className="timeline-content">
+                  <div className="timeline-row"><span className="strong">{c.name}</span></div>
+                  <div className="muted small" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+                    <button type="button" className="text-link" onClick={() => alert(c.content)}>查看內容</button>
+                    {c.signature && (
+                      <img src={c.signature} alt="客戶簽名" title="客戶簽名" style={{ height: 32, border: '1px solid var(--line)', borderRadius: 4, background: '#fff' }} />
+                    )}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       {upcoming.length > 0 && (
         <>
@@ -1882,12 +1956,12 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const selectedService = activeServices.find((s) => s.id === serviceId);
   const priceAutoFillRef = useRef(!isEditing); // 編輯模式下第一次不自動覆蓋已帶入的價格
 
-  // 契約簽名（服務前，同意契約內容）跟服務完成簽名是兩件完全獨立的事，
-  // 店家可以只要其中一個，也可以兩個都要——例如契約先簽一次，做完服務再簽一次確認。
-  const requiredContract = (store.contracts || []).find((c) => c.id === selectedService?.contractId);
+  // 契約同意書簽一次就好，改在客戶建檔／編輯客戶那邊簽署（見 CustomerFormModal），
+  // 這裡只顯示客戶是否已簽署的提醒，不會擋住送出。服務完成簽名是每次服務都獨立的事。
+  const customer = data.customers.find((c) => c.id === customerId);
+  const relatedContract = (store.contracts || []).find((c) => c.id === selectedService?.contractId);
+  const relatedContractSigned = !!(relatedContract && customer && customer.signedContracts && customer.signedContracts[relatedContract.id]);
   const needsCompletionSignature = !!selectedService?.requireSignature;
-  const [signature, setSignature] = useState((record && record.signature) || '');
-  const [agreedToContract, setAgreedToContract] = useState(record ? !!record.contractId : false);
   const [completionSignature, setCompletionSignature] = useState((record && record.completionSignature) || '');
 
   const isFirstTime = useMemo(() => {
@@ -1976,9 +2050,8 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const productsFinal = Math.max(0, productsSum - productDiscountApplied);
   const grandTotal = finalAmount + productsFinal + addonSum;
 
-  const contractSignatureSatisfied = !requiredContract || (agreedToContract && !!signature);
   const completionSignatureSatisfied = !needsCompletionSignature || !!completionSignature;
-  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0) && contractSignatureSatisfied && completionSignatureSatisfied;
+  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0) && completionSignatureSatisfied;
 
   const submit = () => {
     if (!canSubmit) return;
@@ -2006,11 +2079,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       source: isFirstTime ? (source === '其他' && otherSource.trim() ? otherSource.trim() : source) : '回訪',
       notes: notes.trim(),
       reminderSent: isEditing ? (record.reminderSent || false) : false,
-      signature: signature || '',
       completionSignature: completionSignature || '',
-      contractId: requiredContract ? requiredContract.id : '',
-      contractSnapshot: requiredContract ? requiredContract.content : '',
-      contractName: requiredContract ? requiredContract.name : '',
     });
   };
 
@@ -2269,23 +2338,12 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
 
       <Field label="備註"><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
 
-      {requiredContract && (
-        <div className="addon-section">
-          <div className="addon-header">
-            <span className="field-label">服務同意書：{requiredContract.name}</span>
-          </div>
-          <div style={{ border: '1px solid var(--line)', borderRadius: 6, padding: 12, maxHeight: 160, overflowY: 'auto', fontSize: 13, whiteSpace: 'pre-wrap', background: 'var(--white)' }}>
-            {requiredContract.content}
-          </div>
-          <label className="checkbox-row">
-            <input type="checkbox" checked={agreedToContract} onChange={(e) => setAgreedToContract(e.target.checked)} />
-            客戶已詳閱並同意上述內容
-          </label>
-          <Field label="契約簽名" hint="請客人直接在下方用手指或滑鼠簽名，確認同意契約內容">
-            <SignaturePad initialValue={signature} onChange={setSignature} />
-          </Field>
-          {!contractSignatureSatisfied && <p style={{ color: '#b56f65', fontSize: 13 }}>需要勾選同意並完成簽名才能送出</p>}
-        </div>
+      {relatedContract && (
+        <p className="muted small" style={{ marginTop: -8 }}>
+          {relatedContractSigned
+            ? `✓ 客戶已簽署《${relatedContract.name}》同意書`
+            : `⚠ 客戶尚未簽署《${relatedContract.name}》同意書，建議先到「編輯客戶」請客人簽署`}
+        </p>
       )}
 
       {needsCompletionSignature && (
@@ -2407,7 +2465,7 @@ function ServiceFormModal({ store, service, onClose, onSave, onDelete }) {
         </Field>
       ))}
       <Field label="操作時間（分）"><input type="number" value={duration} onChange={(e) => setDuration(e.target.value)} /></Field>
-      <Field label="需要簽署契約" hint="選了之後，新增這個服務的紀錄時會先顯示契約內容，並要求客戶簽名同意">
+      <Field label="需要簽署契約" hint="同意書簽名改在「客戶建檔／編輯客戶」那邊進行，簽過一次之後就不用每次服務都再簽。選了之後，新增這個服務的紀錄時只會提醒客戶是否已簽署">
         <select value={contractId} onChange={(e) => setContractId(e.target.value)}>
           <option value="">無</option>
           {contracts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
