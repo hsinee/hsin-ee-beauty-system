@@ -1876,7 +1876,11 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const selectedService = activeServices.find((s) => s.id === serviceId);
   const priceAutoFillRef = useRef(!isEditing); // 編輯模式下第一次不自動覆蓋已帶入的價格
 
+  // 契約簽署跟「單純要簽名確認」是兩件獨立的事：選了契約一定要簽名，
+  // 但沒選契約的服務，店家也可以另外要求要簽名（不用看契約內容）。
   const requiredContract = (store.contracts || []).find((c) => c.id === selectedService?.contractId);
+  const plainSignatureRequired = !requiredContract && !!selectedService?.requireSignature;
+  const needsSignature = !!requiredContract || plainSignatureRequired;
   const [signature, setSignature] = useState((record && record.signature) || '');
   const [agreedToContract, setAgreedToContract] = useState(record ? !!record.contractId : false);
 
@@ -1966,8 +1970,8 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const productsFinal = Math.max(0, productsSum - productDiscountApplied);
   const grandTotal = finalAmount + productsFinal + addonSum;
 
-  const contractSatisfied = !requiredContract || (agreedToContract && !!signature);
-  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0) && contractSatisfied;
+  const signatureSatisfied = requiredContract ? (agreedToContract && !!signature) : (!plainSignatureRequired || !!signature);
+  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0) && signatureSatisfied;
 
   const submit = () => {
     if (!canSubmit) return;
@@ -2272,7 +2276,19 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
           <Field label="顧客簽名" hint="請客人直接在下方用手指或滑鼠簽名">
             <SignaturePad initialValue={signature} onChange={setSignature} />
           </Field>
-          {!contractSatisfied && <p style={{ color: '#b56f65', fontSize: 13 }}>需要勾選同意並完成簽名才能送出</p>}
+          {!signatureSatisfied && <p style={{ color: '#b56f65', fontSize: 13 }}>需要勾選同意並完成簽名才能送出</p>}
+        </div>
+      )}
+
+      {plainSignatureRequired && (
+        <div className="addon-section">
+          <div className="addon-header">
+            <span className="field-label">顧客簽名確認</span>
+          </div>
+          <Field label="顧客簽名" hint="請客人直接在下方用手指或滑鼠簽名，確認本次服務內容">
+            <SignaturePad initialValue={signature} onChange={setSignature} />
+          </Field>
+          {!signatureSatisfied && <p style={{ color: '#b56f65', fontSize: 13 }}>需要完成簽名才能送出</p>}
         </div>
       )}
 
@@ -2352,6 +2368,7 @@ function ServiceFormModal({ store, service, onClose, onSave, onDelete }) {
   const [duration, setDuration] = useState(service?.duration ? String(service.duration) : '');
   const [active, setActive] = useState(service ? service.active !== false : true);
   const [contractId, setContractId] = useState(service?.contractId || '');
+  const [requireSignature, setRequireSignature] = useState(!!service?.requireSignature);
   const contracts = store.contracts || [];
 
   const setPrice = (tierId) => (e) => setPrices({ ...prices, [tierId]: e.target.value });
@@ -2368,6 +2385,7 @@ function ServiceFormModal({ store, service, onClose, onSave, onDelete }) {
       duration: Number(duration) || 0,
       active,
       contractId,
+      requireSignature,
     });
   };
 
@@ -2381,12 +2399,17 @@ function ServiceFormModal({ store, service, onClose, onSave, onDelete }) {
         </Field>
       ))}
       <Field label="操作時間（分）"><input type="number" value={duration} onChange={(e) => setDuration(e.target.value)} /></Field>
-      <Field label="需要簽署契約" hint="選了之後，新增這個服務的紀錄時會先顯示契約內容並要求客戶簽名">
+      <Field label="需要簽署契約" hint="選了之後，新增這個服務的紀錄時會先顯示契約內容，並要求客戶簽名同意">
         <select value={contractId} onChange={(e) => setContractId(e.target.value)}>
           <option value="">無</option>
           {contracts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
       </Field>
+      <label className="checkbox-row">
+        <input type="checkbox" checked={requireSignature} onChange={(e) => setRequireSignature(e.target.checked)} disabled={!!contractId} />
+        需要顧客簽名（不需要契約，單純確認服務完成）
+      </label>
+      {!!contractId && <p className="muted small" style={{ marginTop: -8, marginBottom: 12 }}>已經選了契約，簽名一定會顯示，不需要再另外勾選</p>}
       <label className="checkbox-row">
         <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
         啟用中（客人可預約 / 新增紀錄時可選擇）
