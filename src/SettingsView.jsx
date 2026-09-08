@@ -125,7 +125,7 @@ export default function SettingsView({ store, onSave }) {
     setSaved(false);
   };
   const addProduct = () => {
-    setProducts([...products, { id: newId('prod'), name: '', price: '' }]);
+    setProducts([...products, { id: newId('prod'), name: '', price: '', stock: '', lowStockThreshold: '' }]);
     setSaved(false);
   };
   const removeProduct = (id) => {
@@ -283,7 +283,10 @@ export default function SettingsView({ store, onSave }) {
     }
     const cleanedTemplates = templates.map((t) => ({ ...t, name: t.name.trim(), content: t.content.trim() })).filter((t) => t.name && t.content);
     const cleanedCustomerFields = customerFields.map((f) => ({ ...f, label: f.label.trim() })).filter((f) => f.label);
-    const cleanedProducts = products.map((p) => ({ ...p, name: p.name.trim(), price: Number(p.price) || 0 })).filter((p) => p.name);
+    const cleanNum = (v) => (v === '' || v === undefined || v === null ? '' : Number(v) || 0);
+    const cleanedProducts = products
+      .map((p) => ({ ...p, name: p.name.trim(), price: Number(p.price) || 0, stock: cleanNum(p.stock), lowStockThreshold: cleanNum(p.lowStockThreshold) }))
+      .filter((p) => p.name);
     const cleanedContracts = contracts.map((c) => ({ ...c, name: c.name.trim(), content: c.content.trim() })).filter((c) => c.name && c.content);
     setSaving(true);
     setError('');
@@ -378,6 +381,10 @@ export default function SettingsView({ store, onSave }) {
           如果這位客人這次也順便買了商品，直接勾選就好，不用每次手動輸入金額，
           而且會跟「加購」分開統計，方便你知道商品銷售額。
         </p>
+        <p className="muted small" style={{ marginBottom: 12 }}>
+          庫存和低庫存提醒都是選填：填了庫存數字，之後客人購買這個商品時系統會自動幫你扣庫存（編輯或刪除紀錄也會自動加回來）；
+          不填庫存就代表這個商品不追蹤庫存。庫存數字本身也可以隨時回來這裡手動修改（例如盤點、進貨）。
+        </p>
         {products.map((p) => (
           <div key={p.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%' }}>
             <input
@@ -392,6 +399,20 @@ export default function SettingsView({ store, onSave }) {
               onChange={(e) => setProductField(p.id, 'price', e.target.value)}
               placeholder="價格"
               style={{ width: 90, minWidth: 0 }}
+            />
+            <input
+              type="number"
+              value={p.stock ?? ''}
+              onChange={(e) => setProductField(p.id, 'stock', e.target.value)}
+              placeholder="庫存（選填）"
+              style={{ width: 100, minWidth: 0 }}
+            />
+            <input
+              type="number"
+              value={p.lowStockThreshold ?? ''}
+              onChange={(e) => setProductField(p.id, 'lowStockThreshold', e.target.value)}
+              placeholder="低庫存提醒門檻"
+              style={{ width: 110, minWidth: 0 }}
             />
             <button
               type="button"

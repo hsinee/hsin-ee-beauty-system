@@ -27,7 +27,7 @@ import SettingsView from './SettingsView.jsx';
    ============================================================ */
 
 const DEFAULT_SOURCES = ['IG', 'Threads', 'Google', '朋友介紹', 'LINE', '自然搜尋', '其他'];
-const PAYMENT_METHODS = ['現金', '轉帳', 'LINE Pay', '信用卡', '其他'];
+const PAYMENT_METHODS = ['現金', '轉帳', 'LINE Pay', '街口支付', '信用卡', '其他'];
 
 const RECORD_STATUS_OPTIONS = [
   { id: 'pending', label: '待確認' },
@@ -695,11 +695,16 @@ function Dashboard({ data, store }) {
     });
     dueForVisit.sort((a, b) => (a.predicted < b.predicted ? -1 : 1));
 
+    // 低庫存商品：只看有填庫存數字、也有設低庫存門檻的商品
+    const lowStockProducts = (store.products || [])
+      .filter((p) => p.stock !== '' && p.stock !== undefined && p.lowStockThreshold !== '' && p.lowStockThreshold !== undefined && Number(p.stock) <= Number(p.lowStockThreshold))
+      .sort((a, b) => Number(a.stock) - Number(b.stock));
+
     return {
       ...core, retentionRate,
-      trend, serviceRevenue, newVsReturning, dueForVisit: dueForVisit.slice(0, 6),
+      trend, serviceRevenue, newVsReturning, dueForVisit: dueForVisit.slice(0, 6), lowStockProducts,
     };
-  }, [data, range.start, range.end]);
+  }, [data, store.products, range.start, range.end]);
 
   const periodCompare = useMemo(() => {
     const useManual = period === 'custom' && compareStart && compareEnd;
@@ -860,6 +865,23 @@ function Dashboard({ data, store }) {
                   <Bell size={14} />
                   <span className="due-name">{c.name}</span>
                   <span className="muted">預估 {fmtDate(c.predicted)} 回訪（平均 {c.avgGap} 天）</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="panel">
+          <h4 className="panel-title">庫存不足</h4>
+          {stats.lowStockProducts.length === 0 ? (
+            <EmptyHint text="目前沒有低於庫存門檻的商品（要先在品牌設定裡填商品的庫存和門檻）" />
+          ) : (
+            <ul className="due-list">
+              {stats.lowStockProducts.map((p) => (
+                <li key={p.id}>
+                  <Bell size={14} />
+                  <span className="due-name">{p.name}</span>
+                  <span className="muted">剩 {p.stock} 個（門檻 {p.lowStockThreshold}）</span>
                 </li>
               ))}
             </ul>
@@ -1929,6 +1951,8 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const [hasDiscount, setHasDiscount] = useState(record ? !!record.discount : false);
   const [discountAmount, setDiscountAmount] = useState(record && record.discount ? String(record.discount) : '');
   const [priceTier, setPriceTier] = useState((record && record.priceTier) || priceTiers[0].id);
+  // 一次預約要選好幾項服務：只在新增模式提供，各自存成獨立的紀錄，共用同一個客人／日期／付款方式
+  const [extraServices, setExtraServices] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState((record && record.paymentMethod) || PAYMENT_METHODS[0]);
   const [source, setSource] = useState(() => {
     const s = record && record.source;
@@ -1994,6 +2018,17 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
     setListPrice(val !== undefined && val !== null ? String(val) : '');
   }, [serviceId, priceTier]);
 
+  // 價格方案改變時，「加另一項服務」裡已經選好服務的那幾行也要跟著換價格
+  useEffect(() => {
+    setExtraServices((prev) => prev.map((es) => {
+      if (!es.serviceId) return es;
+      const svc = activeServices.find((s) => s.id === es.serviceId);
+      const val = svc ? (svc.prices || {})[priceTier] : undefined;
+      return val !== undefined && val !== null ? { ...es, listPrice: String(val) } : es;
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priceTier]);
+
   const custMatches = useMemo(() => {
     const term = customerQuery.trim().toLowerCase();
     if (!term) return [];
@@ -2007,6 +2042,27 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const chosenCustomer = data.customers.find((c) => c.id === customerId);
 
   const selectService = (id) => setServiceId(id);
+
+  const addExtraService = () => setExtraServices((prev) => [...prev, { key: uid(), serviceId: '', listPrice: '', discountAmount: '' }]);
+  const removeExtraService = (key) => setExtraServices((prev) => prev.filter((es) => es.key !== key));
+  const updateExtraService = (key, field, value) => {
+    setExtraServices((prev) => prev.map((es) => {
+      if (es.key !== key) return es;
+      const next = { ...es, [field]: value };
+      if (field === 'serviceId') {
+        const svc = activeServices.find((s) => s.id === value);
+        const val = svc ? (svc.prices || {})[priceTier] : undefined;
+        next.listPrice = val !== undefined && val !== null ? String(val) : '';
+      }
+      return next;
+    }));
+  };
+  const validExtraServices = extraServices.filter((es) => es.serviceId && es.listPrice !== '');
+  const hasIncompleteExtraService = extraServices.some((es) => es.serviceId && es.listPrice === '');
+  const extraServicesFinal = validExtraServices.reduce((s, es) => {
+    const discount = Math.min(Number(es.discountAmount || 0), Number(es.listPrice || 0));
+    return s + Math.max(0, Number(es.listPrice || 0) - discount);
+  }, 0);
 
   const addAddonLine = () => {
     setAddons([...addons, { id: uid(), type: ADDON_TYPES[0], description: '', amount: '' }]);
@@ -2048,14 +2104,14 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const productDiscountApplied = hasProductDiscount ? Math.min(Number(productDiscountAmount || 0), productsSum) : 0;
   const finalAmount = Math.max(0, Number(listPrice || 0) - discountApplied);
   const productsFinal = Math.max(0, productsSum - productDiscountApplied);
-  const grandTotal = finalAmount + productsFinal + addonSum;
+  const grandTotal = finalAmount + productsFinal + addonSum + extraServicesFinal;
 
   const completionSignatureSatisfied = !needsCompletionSignature || !!completionSignature;
-  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0) && completionSignatureSatisfied;
+  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0) && completionSignatureSatisfied && !hasIncompleteExtraService;
 
   const submit = () => {
     if (!canSubmit) return;
-    onSave({
+    const primaryRecord = {
       id: isEditing ? record.id : uid(),
       customerId,
       date,
@@ -2080,7 +2136,44 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       notes: notes.trim(),
       reminderSent: isEditing ? (record.reminderSent || false) : false,
       completionSignature: completionSignature || '',
+    };
+
+    if (isEditing || validExtraServices.length === 0) {
+      onSave(primaryRecord);
+      return;
+    }
+
+    // 「加另一項服務」各自存成獨立的紀錄，共用這次的客人／日期／付款方式；
+    // 加購、購買產品、簽名這些只算在最上面第一項服務裡，不會重複套用到其他服務上。
+    const extraRecords = validExtraServices.map((es) => {
+      const svc = activeServices.find((s) => s.id === es.serviceId);
+      const discount = Math.min(Number(es.discountAmount || 0), Number(es.listPrice || 0));
+      return {
+        id: uid(),
+        customerId,
+        date,
+        time,
+        serviceId: es.serviceId,
+        serviceName: svc ? svc.name : '',
+        listPrice: Number(es.listPrice),
+        priceTier,
+        discount,
+        amount: Math.max(0, Number(es.listPrice) - discount),
+        addons: [],
+        products: [],
+        productDiscount: 0,
+        depositPaid: false,
+        depositAmount: 0,
+        paymentMethod,
+        status,
+        paymentStatus,
+        source: primaryRecord.source,
+        notes: '',
+        reminderSent: false,
+        completionSignature: '',
+      };
     });
+    onSave([primaryRecord, ...extraRecords]);
   };
 
   const [quickAddBusy, setQuickAddBusy] = useState(false);
@@ -2244,6 +2337,42 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         </Field>
       )}
 
+      {!isEditing && (
+        <div className="addon-section">
+          <div className="addon-header">
+            <span className="field-label">加另一項服務</span>
+          </div>
+          {extraServices.map((es) => (
+            <div className="product-row" key={es.key} style={{ flexWrap: 'wrap' }}>
+              <select value={es.serviceId} onChange={(e) => updateExtraService(es.key, 'serviceId', e.target.value)} style={{ flex: '1 1 140px', minWidth: 0 }}>
+                <option value="">請選擇服務</option>
+                {activeServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <input
+                type="number"
+                value={es.listPrice}
+                onChange={(e) => updateExtraService(es.key, 'listPrice', e.target.value)}
+                placeholder="價格"
+                style={{ width: 90, minWidth: 0 }}
+              />
+              <input
+                type="number"
+                value={es.discountAmount}
+                onChange={(e) => updateExtraService(es.key, 'discountAmount', e.target.value)}
+                placeholder="折扣（選填）"
+                style={{ width: 110, minWidth: 0 }}
+              />
+              <button type="button" className="icon-btn ghost" onClick={() => removeExtraService(es.key)} title="移除"><Trash2 size={14} /></button>
+            </div>
+          ))}
+          <button type="button" className="btn-secondary small" onClick={addExtraService} style={{ marginTop: 8 }}>+ 加另一項服務</button>
+          <p className="muted small" style={{ marginTop: 8 }}>
+            這裡加的服務會各自存成一筆獨立的紀錄，共用這次的客人／日期／付款方式；加購、購買產品、簽名還是只算在最上面第一項服務裡
+          </p>
+          {hasIncompleteExtraService && <p style={{ color: '#b56f65', fontSize: 13 }}>加的服務項目要填價格才能送出</p>}
+        </div>
+      )}
+
       {storeProducts.length > 0 && (
         <div className="addon-section">
           <div className="addon-header">
@@ -2254,7 +2383,12 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
               <div className="product-row" key={p.id}>
                 <label className="product-row-label">
                   <input type="checkbox" checked={!!productQtys[p.id]} onChange={() => toggleProduct(p.id)} />
-                  <span>{p.name}（{fmtMoney(p.price)}）</span>
+                  <span>
+                    {p.name}（{fmtMoney(p.price)}）
+                    {p.stock !== '' && p.stock !== undefined && (
+                      <span style={{ color: Number(p.stock) <= 0 ? '#b56f65' : undefined }}> ・ 庫存 {p.stock}</span>
+                    )}
+                  </span>
                 </label>
                 {productQtys[p.id] ? (
                   <input
@@ -2316,6 +2450,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
 
       <div className="final-amount-row breakdown">
         <div className="final-amount-line"><span className="muted">服務金額</span><span>{fmtMoney(finalAmount)}</span></div>
+        {extraServicesFinal > 0 && <div className="final-amount-line"><span className="muted">其他服務金額</span><span>{fmtMoney(extraServicesFinal)}</span></div>}
         {addonSum > 0 && <div className="final-amount-line"><span className="muted">加購金額</span><span>{fmtMoney(addonSum)}</span></div>}
         {productsSum > 0 && <div className="final-amount-line"><span className="muted">產品金額</span><span>{fmtMoney(productsFinal)}</span></div>}
         <div className="final-amount-line total"><span className="strong">總金額</span><span className="strong">{fmtMoney(grandTotal)}</span></div>
@@ -2637,7 +2772,10 @@ function ExpensesView({ data, onSave, onDelete }) {
                   <td>{fmtDate(e.date)}</td>
                   <td>{e.category}</td>
                   <td>{e.item}</td>
-                  <td>{fmtMoney(e.amount)}</td>
+                  <td>
+                    {fmtMoney(e.amount)}
+                    {e.unitPrice > 0 && e.qty > 0 && <div className="muted small">{e.unitPrice} × {e.qty}</div>}
+                  </td>
                   <td>{e.paymentMethod}</td>
                   <td>
                     <button className="icon-btn ghost" onClick={() => setExpenseModal(e)}><Pencil size={14} /></button>
@@ -2666,9 +2804,23 @@ function ExpenseFormModal({ expense, onClose, onSave }) {
   const [category, setCategory] = useState(expense ? expense.category : EXPENSE_CATEGORIES[0].name);
   const [date, setDate] = useState(expense ? expense.date : todayISO());
   const [item, setItem] = useState(expense ? expense.item : '');
+  const [unitPrice, setUnitPrice] = useState(expense && expense.unitPrice ? String(expense.unitPrice) : '');
+  const [qty, setQty] = useState(expense && expense.qty ? String(expense.qty) : '');
   const [amount, setAmount] = useState(expense ? String(expense.amount) : '');
   const [paymentMethod, setPaymentMethod] = useState(expense ? expense.paymentMethod : PAYMENT_METHODS[0]);
   const [notes, setNotes] = useState(expense ? (expense.notes || '') : '');
+
+  // 單價和數量都填了才自動幫忙算金額；金額本身還是可以直接手動輸入或覆蓋
+  const changeUnitPrice = (e) => {
+    const v = e.target.value;
+    setUnitPrice(v);
+    if (v !== '' && qty !== '') setAmount(String((Number(v) || 0) * (Number(qty) || 0)));
+  };
+  const changeQty = (e) => {
+    const v = e.target.value;
+    setQty(v);
+    if (unitPrice !== '' && v !== '') setAmount(String((Number(unitPrice) || 0) * (Number(v) || 0)));
+  };
 
   const submit = () => {
     if (!amount || Number(amount) <= 0) return;
@@ -2678,6 +2830,8 @@ function ExpenseFormModal({ expense, onClose, onSave }) {
       type: expenseCategoryType(category),
       date,
       item: item.trim() || category,
+      unitPrice: Number(unitPrice) || 0,
+      qty: Number(qty) || 0,
       amount: Number(amount),
       paymentMethod,
       notes: notes.trim(),
@@ -2694,7 +2848,13 @@ function ExpenseFormModal({ expense, onClose, onSave }) {
       <Field label="日期"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
       <Field label="項目說明"><input value={item} onChange={(e) => setItem(e.target.value)} placeholder="例如：9 月房租" /></Field>
       <div className="field-row">
-        <Field label="金額"><input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus /></Field>
+        <Field label="單價（選填）"><input type="number" value={unitPrice} onChange={changeUnitPrice} placeholder="例如：50" /></Field>
+        <Field label="數量（選填）"><input type="number" value={qty} onChange={changeQty} placeholder="例如：10" /></Field>
+      </div>
+      <div className="field-row">
+        <Field label="金額" hint={unitPrice && qty ? `＝ 單價 ${unitPrice} × 數量 ${qty}，也可以手動修改` : '填了單價和數量會自動算金額，也可以直接輸入金額就好'}>
+          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus={!isEditing} />
+        </Field>
         <Field label="付款方式">
           <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
             {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
@@ -3180,9 +3340,10 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
     }
   };
 
-  // 依「新舊差額」調整客人儲值餘額。newRecord 為 null 代表這筆紀錄被刪除了。
-  const applyStoredValueDelta = async (customerId, oldRecord, newRecord) => {
-    const delta = storedValueImpact(newRecord) - storedValueImpact(oldRecord);
+  // 依「新舊差額」調整客人儲值餘額，一次可以處理好幾筆紀錄（例如一次新增多項服務），
+  // 這樣才不會因為同一次操作裡改了好幾筆紀錄，後面的改動蓋掉前面的改動。
+  const applyStoredValueDelta = async (customerId, oldRecords, newRecords) => {
+    const delta = newRecords.reduce((s, r) => s + storedValueImpact(r), 0) - oldRecords.reduce((s, r) => s + storedValueImpact(r), 0);
     if (delta === 0) return;
     const customer = data.customers.find((c) => c.id === customerId);
     if (!customer) return;
@@ -3193,14 +3354,41 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
     updateData((d) => { d.customers = d.customers.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)); });
   };
 
-  const handleAddRecord = async (record) => {
+  // 依「新舊數量差額」調整商品庫存，只調整店家有填庫存數字的商品（沒填就當作不追蹤庫存）。
+  // 同樣接受陣列，一次新增多項服務時只會統一調整一次，不會互相蓋掉。
+  const applyStockDelta = async (oldRecords, newRecords) => {
+    const deltaMap = {};
+    oldRecords.forEach((r) => (r?.products || []).forEach((p) => { deltaMap[p.id] = (deltaMap[p.id] || 0) + Number(p.qty || 1); }));
+    newRecords.forEach((r) => (r?.products || []).forEach((p) => { deltaMap[p.id] = (deltaMap[p.id] || 0) - Number(p.qty || 1); }));
+    const products = store.products || [];
+    let changed = false;
+    const updatedProducts = products.map((p) => {
+      const delta = deltaMap[p.id];
+      if (!delta || p.stock === '' || p.stock === undefined || p.stock === null) return p;
+      changed = true;
+      return { ...p, stock: Number(p.stock) + delta };
+    });
+    if (changed) await onStoreChange({ products: updatedProducts });
+  };
+
+  // recordOrRecords 可以是單一紀錄（一般編輯），也可以是陣列（一次新增好幾項服務的情況）。
+  const handleAddRecord = async (recordOrRecords) => {
+    const records = Array.isArray(recordOrRecords) ? recordOrRecords : [recordOrRecords];
     try {
-      const saved = await apiSaveRecord(record, store.id);
-      updateData((d) => {
-        const exists = d.records.some((r) => r.id === saved.id);
-        d.records = exists ? d.records.map((r) => (r.id === saved.id ? saved : r)) : [...d.records, saved];
-      });
-      await applyStoredValueDelta(saved.customerId, null, saved);
+      const savedList = [];
+      for (const record of records) {
+        const saved = await apiSaveRecord(record, store.id);
+        savedList.push(saved);
+        updateData((d) => {
+          const exists = d.records.some((r) => r.id === saved.id);
+          d.records = exists ? d.records.map((r) => (r.id === saved.id ? saved : r)) : [...d.records, saved];
+        });
+      }
+      const customerId = records[0]?.customerId;
+      if (customerId) {
+        await applyStoredValueDelta(customerId, [], savedList);
+        await applyStockDelta([], savedList);
+      }
       setAddRecordFor(null);
     } catch (e) {
       reportError(e);
@@ -3212,7 +3400,8 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       const oldRecord = data.records.find((r) => r.id === record.id);
       const saved = await apiSaveRecord(record, store.id);
       updateData((d) => { d.records = d.records.map((r) => (r.id === saved.id ? saved : r)); });
-      await applyStoredValueDelta(saved.customerId, oldRecord, saved);
+      await applyStoredValueDelta(saved.customerId, oldRecord ? [oldRecord] : [], [saved]);
+      await applyStockDelta(oldRecord ? [oldRecord] : [], [saved]);
       setEditingRecord(null);
     } catch (e) {
       reportError(e);
@@ -3224,7 +3413,10 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       const record = data.records.find((r) => r.id === id);
       await apiDeleteRecord(id);
       updateData((d) => { d.records = d.records.filter((r) => r.id !== id); });
-      if (record) await applyStoredValueDelta(record.customerId, record, null);
+      if (record) {
+        await applyStoredValueDelta(record.customerId, [record], []);
+        await applyStockDelta([record], []);
+      }
     } catch (e) {
       reportError(e);
     }
