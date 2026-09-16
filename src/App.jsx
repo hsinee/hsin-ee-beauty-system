@@ -5,8 +5,7 @@ import {
 } from 'recharts';
 import {
   Search, Plus, X, ChevronRight, ChevronLeft, Trash2, Pencil, Bell,
-  Users, LayoutGrid, Sparkles, Wallet, ClipboardList, Menu, CalendarDays, Clock, Download,
-  CreditCard, Printer
+  Users, LayoutGrid, Sparkles, Wallet, ClipboardList, Menu, CalendarDays, Clock, Download
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -687,15 +686,6 @@ function customerSummary(customer, records) {
   return { own, total, count: own.length, last, first };
 }
 
-function computeRetentionNote(s) {
-  if (s.own.length < 2) return null;
-  const gaps = [];
-  for (let i = 1; i < s.own.length; i++) gaps.push(daysBetween(s.own[i - 1].date, s.own[i].date));
-  const avgGap = Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length);
-  const predicted = addDays(s.last.date, avgGap);
-  return { avgGap, predicted, overdue: predicted < todayISO() };
-}
-
 const PHOTO_CONSENT_LABEL = { yes: '可以拍照', no: '不可拍照', unset: '拍照意願未確認' };
 const MODEL_STATUS_LABEL = { active: '模特資格中', inactive: '已取消模特資格', unset: '非模特' };
 
@@ -996,7 +986,6 @@ function CustomerFormModal({ data, customer, onClose, onSave, onDelete }) {
 
 
 function CustomerDetail({ data, customerId, onBack, onAddRecord, onEditRecord, onDeleteRecord, onDeleteAppointment, onEditCustomer }) {
-  const [showCard, setShowCard] = useState(false);
   const customer = data.customers.find((c) => c.id === customerId);
   if (!customer) return null;
   const s = customerSummary(customer, data.records);
@@ -1006,7 +995,14 @@ function CustomerDetail({ data, customerId, onBack, onAddRecord, onEditRecord, o
     ...data.appointments.filter((a) => a.customerId === customerId && a.date >= todayISO()).map((a) => ({ ...a, source: 'appointment' })),
   ].sort((a, b) => (a.date !== b.date ? (a.date < b.date ? -1 : 1) : (a.time || '').localeCompare(b.time || '')));
 
-  const retentionNote = computeRetentionNote(s);
+  let retentionNote = null;
+  if (s.own.length >= 2) {
+    const gaps = [];
+    for (let i = 1; i < s.own.length; i++) gaps.push(daysBetween(s.own[i - 1].date, s.own[i].date));
+    const avgGap = Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length);
+    const predicted = addDays(s.last.date, avgGap);
+    retentionNote = { avgGap, predicted, overdue: predicted < todayISO() };
+  }
 
   return (
     <div>
@@ -1018,13 +1014,10 @@ function CustomerDetail({ data, customerId, onBack, onAddRecord, onEditRecord, o
           <p className="muted">會員編號 {customer.memberNo} ・ {customer.phone}{customer.lineId ? ` ・ LINE ${customer.lineId}` : ''}</p>
         </div>
         <div className="button-group">
-          <button className="btn-secondary" onClick={() => setShowCard(true)}><CreditCard size={14} /> 顧客資料卡</button>
           <button className="btn-secondary" onClick={() => onEditCustomer(customer)}><Pencil size={14} /> 編輯客戶</button>
           <button className="btn-primary" onClick={() => onAddRecord(customer.id)}><Plus size={16} /> 新增服務／預約</button>
         </div>
       </div>
-
-      {showCard && <CustomerCardModal customer={customer} records={data.records} onClose={() => setShowCard(false)} />}
 
       <div className="kpi-grid narrow">
         <KpiCard label="首次消費日期" value={fmtDate(s.first ? s.first.date : customer.firstVisitDate)} />
@@ -1112,105 +1105,6 @@ function CustomerDetail({ data, customerId, onBack, onAddRecord, onEditRecord, o
           ))}
         </ul>
       )}
-    </div>
-  );
-}
-
-/* ============================================================
-   顧客資料卡（可列印／存 PDF 分享）
-   ============================================================ */
-
-function CustomerCardModal({ customer, records, onClose }) {
-  const s = customerSummary(customer, records);
-  const retentionNote = computeRetentionNote(s);
-  const recentHistory = [...s.own].reverse().slice(0, 5);
-
-  return (
-    <div className="card-modal-overlay" onClick={onClose}>
-      <div className="card-modal-shell" onClick={(e) => e.stopPropagation()}>
-        <div className="card-modal-toolbar">
-          <h3>顧客資料卡</h3>
-          <div className="button-group">
-            <button className="btn-primary small" onClick={() => window.print()}><Printer size={14} /> 列印／存成 PDF</button>
-            <button className="icon-btn ghost" onClick={onClose}><X size={18} /></button>
-          </div>
-        </div>
-
-        <div className="profile-card profile-card-print">
-          <div className="profile-card-header">
-            <img src={LOGO_DATA_URI} alt="HSIN.EE" className="profile-card-logo" />
-            <span className="profile-card-member-no">會員編號 {customer.memberNo}</span>
-          </div>
-
-          <div className="profile-card-name-row">
-            <h2 className="profile-card-name serif">{customer.name}</h2>
-            {isBirthdayThisMonth(customer.birthday) && <span className="badge-birthday inline">🎂 本月生日</span>}
-          </div>
-          <p className="profile-card-contact">
-            {customer.phone}{customer.lineId ? ` ・ LINE ${customer.lineId}` : ''}
-          </p>
-
-          <div className="profile-card-tags">
-            <span className={'tag tag-photo-' + (customer.canPhotograph || 'unset')}>
-              {PHOTO_CONSENT_LABEL[customer.canPhotograph] || PHOTO_CONSENT_LABEL.unset}
-            </span>
-            <span className={'tag tag-model-' + (customer.modelStatus || 'unset')}>
-              {MODEL_STATUS_LABEL[customer.modelStatus] || MODEL_STATUS_LABEL.unset}
-            </span>
-          </div>
-
-          <div className="profile-card-grid">
-            <div>
-              <div className="profile-card-stat-label">生日</div>
-              <div className="profile-card-stat-value">{customer.birthday ? fmtDate(customer.birthday) : '未填寫'}</div>
-            </div>
-            <div>
-              <div className="profile-card-stat-label">首次消費</div>
-              <div className="profile-card-stat-value">{fmtDate(s.first ? s.first.date : customer.firstVisitDate)}</div>
-            </div>
-            <div>
-              <div className="profile-card-stat-label">最近消費</div>
-              <div className="profile-card-stat-value">{s.last ? fmtDate(s.last.date) : '—'}</div>
-            </div>
-            <div>
-              <div className="profile-card-stat-label">回訪狀態</div>
-              <div className="profile-card-stat-value">
-                {retentionNote ? (retentionNote.overdue ? '🔔 建議回訪' : '穩定回訪中') : '尚無足夠資料'}
-              </div>
-            </div>
-            <div>
-              <div className="profile-card-stat-label">累積消費</div>
-              <div className="profile-card-stat-value">{fmtMoney(s.total)}</div>
-            </div>
-            <div>
-              <div className="profile-card-stat-label">消費次數／平均客單價</div>
-              <div className="profile-card-stat-value">{s.count} 次 ・ {fmtMoney(s.count ? s.total / s.count : 0)}</div>
-            </div>
-          </div>
-
-          <h4 className="profile-card-section-title">備註</h4>
-          <p className="profile-card-notes">{customer.notes ? customer.notes : '尚無備註'}</p>
-
-          {recentHistory.length > 0 && (
-            <>
-              <h4 className="profile-card-section-title">近期服務紀錄</h4>
-              <ul className="profile-card-history">
-                {recentHistory.map((r) => (
-                  <li key={r.id}>
-                    <span>{fmtDate(r.date)} ・ {r.serviceName}</span>
-                    <span className="strong">{fmtMoney(recordTotal(r))}</span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-
-          <div className="profile-card-footer">
-            HSIN.EE 熱蠟工作室 ・ 台北市大安區敦化南路一段190巷31號2樓（忠孝復興站14號出口）<br />
-            資料卡產生日期：{fmtDate(todayISO())}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -2444,36 +2338,6 @@ function GlobalStyles({ mobileNavOpen }) {
       .timeline-content { flex: 1; }
       .timeline-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 14px; }
     
-      /* ---- Customer profile card (printable) ---- */
-      .card-modal-overlay { position: fixed; inset: 0; background: rgba(74,59,50,0.45); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 20px; }
-      .card-modal-shell { background: var(--white); border-radius: 12px; max-width: 440px; width: 100%; max-height: 92vh; overflow-y: auto; box-shadow: 0 20px 50px rgba(74,59,50,0.3); }
-      .card-modal-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--white); }
-      .card-modal-toolbar h3 { font-family: 'Noto Serif TC', serif; font-size: 15px; margin: 0; font-weight: 600; }
-      .btn-primary.small { padding: 7px 12px; font-size: 12px; }
-
-      .profile-card { background: var(--cream); padding: 26px 24px 22px; }
-      .profile-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 2px solid var(--rose-deep); }
-      .profile-card-logo { width: 74px; height: auto; }
-      .profile-card-member-no { font-family: 'Noto Serif TC', serif; font-size: 11px; color: var(--rose-deep); background: var(--beige); border: 1px solid var(--rose); border-radius: 20px; padding: 4px 12px; white-space: nowrap; }
-      .profile-card-name-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
-      .profile-card-name { font-size: 24px; font-weight: 700; color: var(--brown); margin: 0; }
-      .profile-card-contact { font-size: 12px; color: var(--taupe); margin: 0 0 14px; }
-      .profile-card-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
-      .profile-card-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 16px; margin-bottom: 18px; }
-      .profile-card-stat-label { font-size: 10px; color: var(--taupe); margin-bottom: 2px; }
-      .profile-card-stat-value { font-family: 'Noto Serif TC', serif; font-size: 14px; font-weight: 600; color: var(--brown); }
-      .profile-card-section-title { font-size: 11px; font-weight: 600; color: var(--rose-deep); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 8px; }
-      .profile-card-notes { background: var(--white); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.6; margin: 0 0 16px; white-space: pre-wrap; }
-      .profile-card-history { list-style: none; margin: 0 0 18px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-      .profile-card-history li { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; background: var(--white); border: 1px solid var(--line); border-radius: 5px; padding: 7px 10px; }
-      .profile-card-footer { border-top: 1px solid var(--line); padding-top: 12px; text-align: center; font-size: 10px; color: var(--taupe); line-height: 1.7; }
-
-      @media print {
-        body * { visibility: hidden; }
-        .profile-card-print, .profile-card-print * { visibility: visible; }
-        .profile-card-print { position: absolute; top: 0; left: 0; width: 100%; margin: 0; box-shadow: none; }
-      }
-
       /* ---- Floating add button ---- */
       .fab { position: fixed; bottom: 28px; right: 28px; background: var(--rose-deep); color: var(--white); border: none; border-radius: 30px; padding: 14px 22px; font-family: inherit; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; box-shadow: 0 8px 20px rgba(74,59,50,0.25); cursor: pointer; z-index: 30; }
     
