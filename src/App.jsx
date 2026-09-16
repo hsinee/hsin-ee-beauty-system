@@ -381,6 +381,18 @@ function Modal({ title, onClose, children, wide }) {
   );
 }
 
+function ConfirmDialog({ title = '刪除確認', message, confirmLabel = '確定刪除', onConfirm, onCancel }) {
+  return (
+    <Modal title={title} onClose={onCancel}>
+      <p className="muted" style={{ marginBottom: 20 }}>{message}</p>
+      <div className="modal-actions">
+        <button className="btn-secondary" onClick={onCancel}>取消</button>
+        <button className="btn-danger" onClick={onConfirm}>{confirmLabel}</button>
+      </div>
+    </Modal>
+  );
+}
+
 function Field({ label, children, hint }) {
   return (
     <label className="field">
@@ -1266,6 +1278,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
 
 function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRecord, onDeleteRecord, onDeleteAppointment, onEditCustomer, onAdjustBalance }) {
   const [showAdjustBalance, setShowAdjustBalance] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null); // null | { kind: 'record'|'appointment', id }
   const customer = data.customers.find((c) => c.id === customerId);
   if (!customer) return null;
   const s = customerSummary(customer, data.records);
@@ -1372,7 +1385,7 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
                   {a.notes && <div className="muted small">備註：{a.notes}</div>}
                 </div>
                 <div className="appointment-actions">
-                  <button className="icon-btn ghost" onClick={() => (a.source === 'record' ? onDeleteRecord : onDeleteAppointment)(a.id)}><Trash2 size={14} /></button>
+                  <button className="icon-btn ghost" onClick={() => setConfirmDelete({ kind: a.source, id: a.id })}><Trash2 size={14} /></button>
                 </div>
               </li>
             ))}
@@ -1439,7 +1452,7 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
               </div>
               <div className="timeline-actions">
                 <button className="icon-btn ghost" onClick={() => onEditRecord(r)}><Pencil size={14} /></button>
-                <button className="icon-btn ghost" onClick={() => onDeleteRecord(r.id)}><Trash2 size={14} /></button>
+                <button className="icon-btn ghost" onClick={() => setConfirmDelete({ kind: 'record', id: r.id })}><Trash2 size={14} /></button>
               </div>
             </li>
           ))}
@@ -1451,6 +1464,17 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
           customer={customer}
           onClose={() => setShowAdjustBalance(false)}
           onSave={async (newBalance) => { await onAdjustBalance(customer.id, newBalance); setShowAdjustBalance(false); }}
+        />
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          message={confirmDelete.kind === 'record' ? '確定要刪除這筆服務紀錄嗎？刪除後無法復原。' : '確定要刪除這筆預約嗎？刪除後無法復原。'}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            (confirmDelete.kind === 'record' ? onDeleteRecord : onDeleteAppointment)(confirmDelete.id);
+            setConfirmDelete(null);
+          }}
         />
       )}
     </div>
@@ -1638,6 +1662,7 @@ function CalendarView({ data, store, onAddRecord, onEditRecord, onDeleteRecord, 
   const [period, setPeriod] = useState('week');
   const [monthCursor, setMonthCursor] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState(todayISO());
+  const [confirmDelete, setConfirmDelete] = useState(null); // null | 該筆要刪除的預約／紀錄
 
   const range = useMemo(() => {
     if (period === 'month') {
@@ -1681,9 +1706,11 @@ function CalendarView({ data, store, onAddRecord, onEditRecord, onDeleteRecord, 
     const fn = item.source === 'record' ? onToggleRecordReminded : onToggleAppointmentReminded;
     fn(item.id, !item.reminderSent);
   };
-  const handleDelete = (item) => {
-    const fn = item.source === 'record' ? onDeleteRecord : onDeleteAppointment;
-    fn(item.id);
+  const handleDelete = (item) => setConfirmDelete(item);
+  const confirmDeleteNow = () => {
+    const fn = confirmDelete.source === 'record' ? onDeleteRecord : onDeleteAppointment;
+    fn(confirmDelete.id);
+    setConfirmDelete(null);
   };
 
   const goPrevMonth = () => { setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() - 1, 1)); setSelectedDay(null); };
@@ -1805,6 +1832,14 @@ function CalendarView({ data, store, onAddRecord, onEditRecord, onDeleteRecord, 
             </div>
           ))}
         </div>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          message={confirmDelete.source === 'record' ? '確定要刪除這筆服務紀錄嗎？刪除後無法復原。' : '確定要刪除這筆預約嗎？刪除後無法復原。'}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={confirmDeleteNow}
+        />
       )}
     </div>
   );
@@ -2638,8 +2673,11 @@ function ExpensesView({ data, onSave, onDelete }) {
   const [customEnd, setCustomEnd] = useState(todayISO());
   const [compareStart, setCompareStart] = useState('');
   const [compareEnd, setCompareEnd] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState(null); // 點「各分類累積花費」的卡片，篩選下面的支出明細
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
   const sorted = [...data.expenses].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const filtered = categoryFilter ? sorted.filter((e) => e.category === categoryFilter) : sorted;
   const total = data.expenses.reduce((s, e) => s + Number(e.amount), 0);
 
   const byCategory = useMemo(() => {
@@ -2750,24 +2788,34 @@ function ExpensesView({ data, onSave, onDelete }) {
       </div>
 
       <h4 className="panel-title">各分類累積花費</h4>
+      <p className="muted small" style={{ marginTop: -8, marginBottom: 12 }}>點分類卡片可以只看該分類的支出明細，再點一次取消篩選</p>
       <div className="category-summary-grid">
         {byCategory.map((c) => (
-          <div className="category-summary-card" key={c.name}>
+          <div
+            className={'category-summary-card' + (categoryFilter === c.name ? ' active' : '')}
+            key={c.name}
+            onClick={() => setCategoryFilter(categoryFilter === c.name ? null : c.name)}
+            role="button"
+            tabIndex={0}
+          >
             <div className="kpi-label">{c.name}</div>
             <div className="kpi-value small">{fmtMoney(c.total)}</div>
           </div>
         ))}
       </div>
 
-      <h4 className="panel-title" style={{ marginTop: 24 }}>支出明細</h4>
-      {sorted.length === 0 ? (
-        <EmptyHint text="還沒有成本紀錄" />
+      <div className="view-head" style={{ marginTop: 24, marginBottom: 0 }}>
+        <h4 className="panel-title">支出明細{categoryFilter ? `　－　${categoryFilter}` : ''}</h4>
+        {categoryFilter && <button type="button" className="text-link" onClick={() => setCategoryFilter(null)}>清除篩選，顯示全部</button>}
+      </div>
+      {filtered.length === 0 ? (
+        <EmptyHint text={categoryFilter ? `「${categoryFilter}」還沒有支出紀錄` : '還沒有成本紀錄'} />
       ) : (
         <div className="table-wrap">
           <table className="data-table">
             <thead><tr><th>日期</th><th>分類</th><th>項目</th><th>金額</th><th>付款方式</th><th></th></tr></thead>
             <tbody>
-              {sorted.map((e) => (
+              {filtered.map((e) => (
                 <tr key={e.id}>
                   <td>{fmtDate(e.date)}</td>
                   <td>{e.category}</td>
@@ -2779,13 +2827,21 @@ function ExpensesView({ data, onSave, onDelete }) {
                   <td>{e.paymentMethod}</td>
                   <td>
                     <button className="icon-btn ghost" onClick={() => setExpenseModal(e)}><Pencil size={14} /></button>
-                    <button className="icon-btn ghost" onClick={() => onDelete(e.id)}><Trash2 size={14} /></button>
+                    <button className="icon-btn ghost" onClick={() => setConfirmDeleteId(e.id)}><Trash2 size={14} /></button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {confirmDeleteId && (
+        <ConfirmDialog
+          message="確定要刪除這筆支出紀錄嗎？刪除後無法復原。"
+          onCancel={() => setConfirmDeleteId(null)}
+          onConfirm={() => { onDelete(confirmDeleteId); setConfirmDeleteId(null); }}
+        />
       )}
 
       {expenseModal && (
@@ -3014,7 +3070,9 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       .change-down { color: var(--alert); font-weight: 600; }
     
       .category-summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-      .category-summary-card { background: var(--white); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; }
+      .category-summary-card { background: var(--white); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+      .category-summary-card:hover { border-color: var(--rose); }
+      .category-summary-card.active { border-color: var(--rose); box-shadow: 0 0 0 1px var(--rose); }
       .kpi-value.small { font-family: 'Noto Serif TC', serif; font-size: 17px; font-weight: 600; }
     
       .final-amount-row { display: flex; justify-content: space-between; align-items: center; background: var(--beige); border-radius: 6px; padding: 10px 14px; font-size: 14px; }
