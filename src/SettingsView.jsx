@@ -87,6 +87,7 @@ export default function SettingsView({ store, onSave }) {
   const [products, setProducts] = useState(store.products || []);
   const [templates, setTemplates] = useState(store.messageTemplates || []);
   const [contracts, setContracts] = useState(store.contracts || []);
+  const [staff, setStaff] = useState(store.staff || []);
   const [customerFields, setCustomerFields] = useState(store.customerFields || []);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -130,6 +131,19 @@ export default function SettingsView({ store, onSave }) {
   };
   const removeProduct = (id) => {
     setProducts(products.filter((p) => p.id !== id));
+    setSaved(false);
+  };
+
+  const setStaffField = (id, field, value) => {
+    setStaff(staff.map((s) => (s.id === id ? { ...s, [field]: value } : s)));
+    setSaved(false);
+  };
+  const addStaff = () => {
+    setStaff([...staff, { id: newId('staff'), name: '', active: true }]);
+    setSaved(false);
+  };
+  const removeStaff = (id) => {
+    setStaff(staff.filter((s) => s.id !== id));
     setSaved(false);
   };
 
@@ -288,15 +302,17 @@ export default function SettingsView({ store, onSave }) {
       .map((p) => ({ ...p, name: p.name.trim(), price: Number(p.price) || 0, stock: cleanNum(p.stock), lowStockThreshold: cleanNum(p.lowStockThreshold) }))
       .filter((p) => p.name);
     const cleanedContracts = contracts.map((c) => ({ ...c, name: c.name.trim(), content: c.content.trim() })).filter((c) => c.name && c.content);
+    const cleanedStaff = staff.map((s) => ({ ...s, name: s.name.trim() })).filter((s) => s.name);
     setSaving(true);
     setError('');
     try {
-      await onSave({ ...form, logoUrl, priceTiers: cleanedTiers, messageTemplates: cleanedTemplates, customerFields: cleanedCustomerFields, products: cleanedProducts, contracts: cleanedContracts });
+      await onSave({ ...form, logoUrl, priceTiers: cleanedTiers, messageTemplates: cleanedTemplates, customerFields: cleanedCustomerFields, products: cleanedProducts, contracts: cleanedContracts, staff: cleanedStaff });
       setPriceTiers(cleanedTiers);
       setTemplates(cleanedTemplates);
       setContracts(cleanedContracts);
       setCustomerFields(cleanedCustomerFields);
       setProducts(cleanedProducts);
+      setStaff(cleanedStaff);
       setSaved(true);
     } catch (err) {
       setError(err.message);
@@ -524,6 +540,32 @@ export default function SettingsView({ store, onSave }) {
           </div>
         ))}
         <button type="button" className="btn-secondary small" onClick={addContract}>+ 新增契約</button>
+      </div>
+
+      <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>
+        <div className="field-label" style={{ marginBottom: 4 }}>服務老師</div>
+        <p className="muted small" style={{ marginBottom: 12 }}>
+          建好名單後，新增服務紀錄時可以選這次是哪位老師服務的，「業績」頁面就能依老師分別統計；
+          編輯紀錄時如果改到金額、服務老師等關鍵欄位，系統也會記一筆修改紀錄，方便對業績帳的時候查對。
+        </p>
+        {staff.map((s) => (
+          <div key={s.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%' }}>
+            <input
+              value={s.name}
+              onChange={(e) => setStaffField(s.id, 'name', e.target.value)}
+              placeholder="老師姓名"
+              style={{ flex: '1 1 140px', minWidth: 0 }}
+            />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={s.active !== false} onChange={(e) => setStaffField(s.id, 'active', e.target.checked)} />
+              啟用中
+            </label>
+            <button type="button" className="icon-btn ghost" onClick={() => removeStaff(s.id)} title="刪除">
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ))}
+        <button type="button" className="btn-secondary small" onClick={addStaff}>+ 新增服務老師</button>
       </div>
 
       <div className="panel" style={{ maxWidth: 480, marginTop: 18 }}>

@@ -44,6 +44,7 @@ function defaultStore() {
     products: [],
     discountPresetsEnabled: false,
     contracts: [],
+    staff: [],
     messageTemplates: [
       {
         id: 'tpl-appointment-reminder',

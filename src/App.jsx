@@ -5,7 +5,8 @@ import {
 } from 'recharts';
 import {
   Search, Plus, X, ChevronRight, ChevronLeft, Trash2, Pencil, Bell,
-  Users, LayoutGrid, Sparkles, Wallet, ClipboardList, Menu, CalendarDays, Clock, Download, Settings as SettingsIcon
+  Users, LayoutGrid, Sparkles, Wallet, ClipboardList, Menu, CalendarDays, Clock, Download, Settings as SettingsIcon,
+  Award, History
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
@@ -1279,6 +1280,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
 function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRecord, onDeleteRecord, onDeleteAppointment, onEditCustomer, onAdjustBalance }) {
   const [showAdjustBalance, setShowAdjustBalance] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null); // null | { kind: 'record'|'appointment', id }
+  const [viewHistoryRecord, setViewHistoryRecord] = useState(null);
   const customer = data.customers.find((c) => c.id === customerId);
   if (!customer) return null;
   const s = customerSummary(customer, data.records);
@@ -1428,9 +1430,15 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
                 <div className="muted small">
                   付款：{r.paymentMethod}{r.paymentStatus ? `（${paymentStatusLabel(r.paymentStatus)}）` : ''}
                   {r.discount ? ` ・ 服務折扣：${fmtMoney(r.discount)}（原價 ${fmtMoney(r.listPrice)}）` : ''}
+                  {r.staffId ? ` ・ 服務老師：${(store.staff || []).find((s) => s.id === r.staffId)?.name || '（已刪除）'}` : ''}
                   {r.source ? ` ・ 來源：${r.source}` : ''}
                   {r.notes ? ` ・ 備註：${r.notes}` : ''}
                 </div>
+                {r.history && r.history.length > 0 && (
+                  <button type="button" className="text-link" style={{ marginTop: 4, fontSize: 12 }} onClick={() => setViewHistoryRecord(r)}>
+                    <History size={12} style={{ verticalAlign: -2, marginRight: 3 }} />查看修改紀錄（{r.history.length}）
+                  </button>
+                )}
                 {r.depositPaid && <span className="tag tag-deposit">已收訂金 {fmtMoney(r.depositAmount || 0)}</span>}
                 {(r.signature || r.contractName) && (
                   <div className="muted small" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
@@ -1477,6 +1485,10 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
           }}
         />
       )}
+
+      {viewHistoryRecord && (
+        <RecordHistoryModal record={viewHistoryRecord} onClose={() => setViewHistoryRecord(null)} />
+      )}
     </div>
   );
 }
@@ -1506,6 +1518,35 @@ function AdjustBalanceModal({ customer, onClose, onSave }) {
       <div className="modal-actions">
         <button className="btn-primary full" onClick={submit} disabled={busy}>{busy ? '儲存中⋯' : '儲存'}</button>
       </div>
+    </Modal>
+  );
+}
+
+function RecordHistoryModal({ record, onClose }) {
+  const history = [...(record.history || [])].reverse(); // 最新的排最上面
+  return (
+    <Modal title="修改紀錄" onClose={onClose}>
+      <p className="muted small" style={{ marginBottom: 12 }}>
+        這筆紀錄關鍵欄位每次被改動，系統都會在這裡留一筆紀錄，方便核對業績帳。
+      </p>
+      {history.length === 0 ? (
+        <EmptyHint text="這筆紀錄還沒有修改過" />
+      ) : (
+        <ul className="timeline" style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+          {history.map((h) => (
+            <li key={h.id} style={{ border: '1px solid var(--line)', borderRadius: 6, padding: 10, marginBottom: 8 }}>
+              <div className="muted small" style={{ marginBottom: 6 }}>
+                {new Date(h.at).toLocaleString('zh-TW')}　・　操作人：{h.operator}
+              </div>
+              {h.changes.map((c, i) => (
+                <div key={i} style={{ fontSize: 13 }}>
+                  {c.field}：{c.from} → {c.to}
+                </div>
+              ))}
+            </li>
+          ))}
+        </ul>
+      )}
     </Modal>
   );
 }
@@ -2010,6 +2051,11 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const [depositAmount, setDepositAmount] = useState(record && record.depositAmount ? String(record.depositAmount) : '');
   const [status, setStatus] = useState((record && record.status) || 'confirmed');
   const [paymentStatus, setPaymentStatus] = useState((record && record.paymentStatus) || 'paid_full');
+  const [staffId, setStaffId] = useState((record && record.staffId) || '');
+  const activeStaff = (store.staff || []).filter((s) => s.active !== false);
+  // 編輯既有紀錄時，如果店家有建服務老師名單，就要求選「這次是誰在改」，
+  // 存成這筆紀錄的修改歷程，不是用來擋修改、是讓老闆之後對業績帳能查得到。
+  const [operatorId, setOperatorId] = useState('');
 
   const activeServices = data.services.filter((s) => s.active);
   const selectedService = activeServices.find((s) => s.id === serviceId);
@@ -2142,7 +2188,23 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const grandTotal = finalAmount + productsFinal + addonSum + extraServicesFinal;
 
   const completionSignatureSatisfied = !needsCompletionSignature || !!completionSignature;
-  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0) && completionSignatureSatisfied && !hasIncompleteExtraService;
+  // 有服務老師名單的店家，編輯既有紀錄時要先確認「這次是誰在改」，存進修改歷程方便對業績帳。
+  const requiresOperatorConfirm = isEditing && activeStaff.length > 0;
+  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0) && completionSignatureSatisfied && !hasIncompleteExtraService && (!requiresOperatorConfirm || !!operatorId);
+
+  // 用來記錄「編輯紀錄」時哪些關鍵欄位被改了，給老闆事後對業績帳、抓有沒有人動過紀錄用。
+  const HISTORY_FIELDS = [
+    { key: 'staffId', label: '服務老師', format: (v) => (store.staff || []).find((s) => s.id === v)?.name || '未指定' },
+    { key: 'serviceId', label: '服務項目', format: (v) => data.services.find((s) => s.id === v)?.name || '（僅購買產品）' },
+    { key: 'listPrice', label: '原價', format: (v) => fmtMoney(v) },
+    { key: 'discount', label: '折扣', format: (v) => fmtMoney(v) },
+    { key: 'amount', label: '服務金額', format: (v) => fmtMoney(v) },
+    { key: 'paymentStatus', label: '付款狀態', format: (v) => paymentStatusLabel(v) },
+    { key: 'status', label: '預約狀態', format: (v) => recordStatusLabel(v) },
+  ];
+  const buildChanges = (oldRec, newRec) => HISTORY_FIELDS
+    .filter((f) => (oldRec[f.key] || '') !== (newRec[f.key] || ''))
+    .map((f) => ({ field: f.label, from: f.format(oldRec[f.key]), to: f.format(newRec[f.key]) }));
 
   const submit = () => {
     if (!canSubmit) return;
@@ -2167,13 +2229,25 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       paymentMethod,
       status,
       paymentStatus,
+      staffId,
       source: isFirstTime ? (source === '其他' && otherSource.trim() ? otherSource.trim() : source) : '回訪',
       notes: notes.trim(),
       reminderSent: isEditing ? (record.reminderSent || false) : false,
       completionSignature: completionSignature || '',
+      history: record ? (record.history || []) : [],
     };
 
-    if (isEditing || validExtraServices.length === 0) {
+    if (isEditing) {
+      const changes = buildChanges(record, primaryRecord);
+      if (changes.length > 0) {
+        const operatorName = activeStaff.find((s) => s.id === operatorId)?.name || '（未指定操作人）';
+        primaryRecord.history = [...primaryRecord.history, { id: uid(), at: new Date().toISOString(), operator: operatorName, changes }];
+      }
+      onSave(primaryRecord);
+      return;
+    }
+
+    if (validExtraServices.length === 0) {
       onSave(primaryRecord);
       return;
     }
@@ -2202,10 +2276,12 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         paymentMethod,
         status,
         paymentStatus,
+        staffId,
         source: primaryRecord.source,
         notes: '',
         reminderSent: false,
         completionSignature: '',
+        history: [],
       };
     });
     onSave([primaryRecord, ...extraRecords]);
@@ -2291,6 +2367,15 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
           {activeServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
       </Field>
+
+      {activeStaff.length > 0 && (
+        <Field label="服務老師" hint="用來算「業績」頁面的分老師統計，可以跟目前登入的人不同">
+          <select value={staffId} onChange={(e) => setStaffId(e.target.value)}>
+            <option value="">未指定</option>
+            {activeStaff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+      )}
 
       {selectedService && priceTiers.length > 1 && (
         <Field label="價格方案">
@@ -2528,6 +2613,16 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         </div>
       )}
 
+      {requiresOperatorConfirm && (
+        <Field label="這次修改由誰執行" hint="會記錄在這筆紀錄的修改歷程裡，不是服務老師欄位，單純是誰動了這次修改">
+          <select value={operatorId} onChange={(e) => setOperatorId(e.target.value)}>
+            <option value="">請選擇</option>
+            {activeStaff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          {!operatorId && <p style={{ color: '#b56f65', fontSize: 13, marginTop: 6 }}>需要選擇操作人才能儲存修改</p>}
+        </Field>
+      )}
+
       <div className="modal-actions">
         <button className="btn-primary full" disabled={!canSubmit} onClick={submit}>{isEditing ? '儲存修改' : '完成服務'}</button>
       </div>
@@ -2659,6 +2754,88 @@ function ServiceFormModal({ store, service, onClose, onSave, onDelete }) {
         <button className="btn-primary full" onClick={submit}>儲存</button>
       </div>
     </Modal>
+  );
+}
+
+/* ============================================================
+   業績（依服務老師統計）
+   ============================================================ */
+
+function StaffPerformanceView({ data, store }) {
+  const [period, setPeriod] = useState('month');
+  const [customStart, setCustomStart] = useState(todayISO());
+  const [customEnd, setCustomEnd] = useState(todayISO());
+  const range = getRangeDates(period, customStart, customEnd);
+  const staffList = store.staff || [];
+
+  const rows = useMemo(() => {
+    const inRange = data.records.filter((r) => r.date >= range.start && r.date <= range.end);
+    const map = {};
+    inRange.forEach((r) => {
+      const key = r.staffId || '__unassigned__';
+      if (!map[key]) map[key] = { total: 0, visits: 0 };
+      map[key].total += recordTotal(r);
+      map[key].visits += 1;
+    });
+    const named = staffList.map((s) => ({
+      id: s.id, name: s.name,
+      total: (map[s.id] && map[s.id].total) || 0,
+      visits: (map[s.id] && map[s.id].visits) || 0,
+    }));
+    if (map.__unassigned__) {
+      named.push({ id: '__unassigned__', name: '未指定服務老師', total: map.__unassigned__.total, visits: map.__unassigned__.visits });
+    }
+    return named.sort((a, b) => b.total - a.total);
+  }, [data.records, range.start, range.end, staffList]);
+
+  const grandTotal = rows.reduce((s, r) => s + r.total, 0);
+
+  return (
+    <div>
+      <div className="view-head">
+        <div>
+          <h2 className="serif">業績</h2>
+          <p className="muted">{fmtDate(range.start)} — {fmtDate(range.end)}　・　合計 {fmtMoney(grandTotal)}</p>
+        </div>
+      </div>
+
+      <div className="period-tabs" style={{ marginBottom: 14 }}>
+        {PERIODS.map((p) => (
+          <button
+            key={p.id}
+            className={'period-tab' + (period === p.id ? ' active' : '')}
+            onClick={() => setPeriod(p.id)}
+          >{p.label}</button>
+        ))}
+      </div>
+
+      {period === 'custom' && (
+        <div className="custom-range">
+          <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} />
+          <span className="muted">至</span>
+          <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} />
+        </div>
+      )}
+
+      {staffList.length === 0 ? (
+        <EmptyHint text="還沒有建立服務老師名單，先到「品牌設定」新增服務老師" />
+      ) : (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead><tr><th>服務老師</th><th>服務人次</th><th>業績</th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  <td className="strong">{r.name}</td>
+                  <td>{r.visits}</td>
+                  <td>{fmtMoney(r.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2936,6 +3113,7 @@ const NAV = [
   { id: 'revisit', label: '回訪提醒', icon: Bell },
   { id: 'services', label: '服務項目', icon: Sparkles },
   { id: 'expenses', label: '成本', icon: Wallet },
+  { id: 'staff', label: '業績', icon: Award },
   { id: 'settings', label: '品牌設定', icon: SettingsIcon },
 ];
 
@@ -3651,6 +3829,8 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
           {view === 'services' && <ServicesView data={data} store={store} onSave={handleSaveService} onDelete={handleDeleteService} />}
 
           {view === 'expenses' && <ExpensesView data={data} onSave={handleSaveExpense} onDelete={handleDeleteExpense} />}
+
+          {view === 'staff' && <StaffPerformanceView data={data} store={store} />}
 
           {view === 'settings' && <SettingsView store={store} onSave={handleSaveStoreSettings} />}
         </main>
