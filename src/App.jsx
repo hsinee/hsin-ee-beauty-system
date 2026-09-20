@@ -317,9 +317,13 @@ function getRangeDates(period, customStart, customEnd) {
     start = toLocalISO(d);
   } else if (period === 'month') {
     start = toLocalISO(new Date(now.getFullYear(), now.getMonth(), 1));
+    // 本月是算整個月（月初到月底），不是只算到今天，這樣才能跟其他期間的加總對得起來
+    // （例如「今年」是全年一路加到 12/31，本月卻只到今天，兩邊會對不上）
+    return { start, end: toLocalISO(new Date(now.getFullYear(), now.getMonth() + 1, 0)) };
   } else if (period === 'quarter') {
     const q = Math.floor(now.getMonth() / 3);
     start = toLocalISO(new Date(now.getFullYear(), q * 3, 1));
+    return { start, end: toLocalISO(new Date(now.getFullYear(), q * 3 + 3, 0)) };
   } else if (period === 'year') {
     start = toLocalISO(new Date(now.getFullYear(), 0, 1));
     return { start, end: toLocalISO(new Date(now.getFullYear(), 11, 31)) };
@@ -598,24 +602,30 @@ const PREV_PERIOD_LABEL = { today: '昨日', week: '上週', month: '上月', qu
 function shiftRangeByPeriod(period, range, customStart, customEnd) {
   const elapsedDays = daysBetween(range.start, range.end);
   let prevStart;
+  let prevEnd = null;
   if (period === 'today') {
     prevStart = addDays(range.start, -1);
   } else if (period === 'week') {
     prevStart = addDays(range.start, -7);
   } else if (period === 'month') {
+    // 月跟季現在都是算整月／整季，長度不一定跟上個月／上一季一樣（例如 31 天的月比 2 月長），
+    // 不能再用「往前推同樣天數」這種算法，要直接算「範圍開始前一天所在月份」的最後一天。
     const [y, m] = range.start.split('-').map(Number);
     prevStart = toLocalISO(new Date(y, m - 2, 1));
+    prevEnd = toLocalISO(new Date(y, m - 1, 0));
   } else if (period === 'quarter') {
     const [y, m] = range.start.split('-').map(Number);
     prevStart = toLocalISO(new Date(y, m - 4, 1));
+    prevEnd = toLocalISO(new Date(y, m - 1, 0));
   } else if (period === 'year') {
     const [y] = range.start.split('-').map(Number);
     prevStart = toLocalISO(new Date(y - 1, 0, 1));
+    prevEnd = toLocalISO(new Date(y - 1, 11, 31));
   } else {
     const length = daysBetween(customStart, customEnd);
     prevStart = addDays(customStart, -(length + 1));
   }
-  const prevEnd = addDays(prevStart, elapsedDays);
+  if (prevEnd === null) prevEnd = addDays(prevStart, elapsedDays);
   return { start: prevStart, end: prevEnd };
 }
 
