@@ -738,13 +738,16 @@ function Dashboard({ data, store }) {
     const prevLabel = period === 'custom' ? `${fmtDate(prevRange.start)}–${fmtDate(prevRange.end)}` : PREV_PERIOD_LABEL[period];
     return {
       currLabel, prevLabel,
+      // 這裡的欄位名稱要跟上面 KPI 卡片一模一樣，不要各叫各的讓人以為是不同東西。
+      // 「累積回訪率」不放進來，因為那個本來就是全歷史數字、不是照期間算的，放進「期間比較」表格裡沒有意義。
       rows: [
-        { label: '營收', curr: curr.revenue, prev: prev.revenue, fmt: fmtMoney },
+        { label: '期間營收', curr: curr.revenue, prev: prev.revenue, fmt: fmtMoney },
         { label: '服務人次', curr: curr.visits, prev: prev.visits, fmt: (v) => v },
         { label: '新客人數', curr: curr.newCount, prev: prev.newCount, fmt: (v) => v },
+        { label: '舊客回訪人次', curr: curr.returningVisits, prev: prev.returningVisits, fmt: (v) => v },
         { label: '平均客單價', curr: curr.avgTicket, prev: prev.avgTicket, fmt: fmtMoney },
-        { label: '毛利', curr: curr.grossProfit, prev: prev.grossProfit, fmt: fmtMoney },
-        { label: '淨利', curr: curr.netProfit, prev: prev.netProfit, fmt: fmtMoney },
+        { label: '期間總支出', curr: curr.totalExpense, prev: prev.totalExpense, fmt: fmtMoney },
+        { label: '期間淨利', curr: curr.netProfit, prev: prev.netProfit, fmt: fmtMoney },
       ],
     };
   }, [data, period, range.start, range.end, customStart, customEnd, compareStart, compareEnd]);
@@ -1466,6 +1469,9 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
                     <span>服務完成簽名：</span>
                     <img src={r.completionSignature} alt="服務完成簽名" title="服務完成簽名" style={{ height: 32, border: '1px solid var(--line)', borderRadius: 4, background: '#fff' }} />
                   </div>
+                )}
+                {!r.completionSignature && data.services.find((sv) => sv.id === r.serviceId)?.requireSignature && (
+                  <div className="muted small" style={{ marginTop: 6, color: 'var(--alert)' }}>⚠ 尚未完成簽名，客人到店時記得回來補簽</div>
                 )}
               </div>
               <div className="timeline-actions">
@@ -2197,10 +2203,12 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const productsFinal = Math.max(0, productsSum - productDiscountApplied);
   const grandTotal = finalAmount + productsFinal + addonSum + extraServicesFinal;
 
-  const completionSignatureSatisfied = !needsCompletionSignature || !!completionSignature;
+  // 完成簽名不擋送出：可以先把預約/服務資料存起來，客人到店再回來補簽名，
+  // 不用逼店家一定要簽完名才能存檔。
+  const needsCompletionSignatureButNotYet = needsCompletionSignature && !completionSignature;
   // 有服務老師名單的店家，編輯既有紀錄時要先確認「這次是誰在改」，存進修改歷程方便對業績帳。
   const requiresOperatorConfirm = isEditing && activeStaff.length > 0;
-  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0) && completionSignatureSatisfied && !hasIncompleteExtraService && (!requiresOperatorConfirm || !!operatorId);
+  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0) && !hasIncompleteExtraService && (!requiresOperatorConfirm || !!operatorId);
 
   // 用來記錄「編輯紀錄」時哪些關鍵欄位被改了，給老闆事後對業績帳、抓有沒有人動過紀錄用。
   const HISTORY_FIELDS = [
@@ -2616,10 +2624,10 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
           <div className="addon-header">
             <span className="field-label">服務完成簽名確認</span>
           </div>
-          <Field label="顧客簽名" hint="請客人直接在下方用手指或滑鼠簽名，確認本次服務已完成">
+          <Field label="顧客簽名" hint="請客人直接在下方用手指或滑鼠簽名，確認本次服務已完成；也可以先不簽，等客人到店再回來這筆紀錄補簽">
             <SignaturePad initialValue={completionSignature} onChange={setCompletionSignature} />
           </Field>
-          {!completionSignatureSatisfied && <p style={{ color: '#b56f65', fontSize: 13 }}>需要完成簽名才能送出</p>}
+          {needsCompletionSignatureButNotYet && <p className="muted small" style={{ marginTop: 4 }}>尚未簽名，可以先儲存，之後再回來這筆紀錄補簽即可</p>}
         </div>
       )}
 
