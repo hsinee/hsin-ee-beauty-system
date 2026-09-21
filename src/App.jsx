@@ -3391,7 +3391,9 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       .btn-danger { display: inline-flex; align-items: center; gap: 6px; background: transparent; color: var(--alert); border: 1px solid var(--alert); border-radius: 6px; padding: 9px 14px; font-family: inherit; font-size: 13px; cursor: pointer; }
       .icon-btn { background: transparent; border: none; cursor: pointer; color: var(--taupe); padding: 4px; display: flex; align-items: center; }
       .icon-btn.ghost:hover { color: var(--alert); }
-      .text-link { background: none; border: none; color: var(--rose-deep); font-family: inherit; font-size: 13px; cursor: pointer; text-decoration: underline; padding: 4px 0; text-align: left; }
+      /* 固定用 --brown（不會被店家自訂的品牌主色影響），避免店家把主色調得跟背景色太接近時，
+         這些文字按鈕（清除重簽、查看內容、調整餘額⋯）在畫面上幾乎看不見。 */
+      .text-link { background: none; border: none; color: var(--brown); font-family: inherit; font-size: 13px; cursor: pointer; text-decoration: underline; padding: 4px 0; text-align: left; }
     
       /* ---- Forms / Modal ---- */
       .modal-overlay { position: fixed; inset: 0; background: rgba(74,59,50,0.35); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
