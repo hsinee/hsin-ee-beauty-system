@@ -6,7 +6,7 @@ import {
 import {
   Search, Plus, X, ChevronRight, ChevronLeft, Trash2, Pencil, Bell,
   Users, LayoutGrid, Sparkles, Wallet, ClipboardList, Menu, CalendarDays, Clock, Download, Settings as SettingsIcon,
-  Award, History
+  Award, History, GripVertical
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
@@ -16,6 +16,7 @@ import {
   deleteCustomer as apiDeleteCustomer,
   saveService as apiSaveService,
   deleteService as apiDeleteService,
+  saveServicesOrder as apiSaveServicesOrder,
   saveRecord as apiSaveRecord,
   deleteRecord as apiDeleteRecord,
   saveExpense as apiSaveExpense,
@@ -1952,6 +1953,9 @@ function SignaturePad({ initialValue, onChange }) {
   const drawingRef = useRef(false);
   const lastPosRef = useRef(null);
   const hasDrawnRef = useRef(false);
+  // 「清除重簽」旁邊就是簽名板，手滑很容易誤觸就把簽好的簽名整個清掉，
+  // 所以清除前一定要先跳出確認，避免不小心點一下就要重簽。
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -2021,7 +2025,16 @@ function SignaturePad({ initialValue, onChange }) {
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
       />
-      <button type="button" className="text-link" onClick={clear} style={{ marginTop: 6 }}>清除重簽</button>
+      <button type="button" className="text-link" onClick={() => setConfirmClear(true)} style={{ marginTop: 6 }}>清除重簽</button>
+      {confirmClear && (
+        <ConfirmDialog
+          title="清除簽名"
+          message="確定要清除這個簽名，讓客人重簽嗎？清除後無法復原。"
+          confirmLabel="確定清除"
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={() => { clear(); setConfirmClear(false); }}
+        />
+      )}
     </div>
   );
 }
@@ -2648,12 +2661,46 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   );
 }
 
+// 拖曳排序：抓住拖曳手把（setPointerCapture 讓後面的移動/放開事件都固定送到這個手把，
+// 不會因為清單重新排序、手把在畫面上的位置跟著換了就追丟），移動時用 elementFromPoint
+// 找出目前壓在哪一列上面，跟原本拖的那一列不同就直接交換順序，放開就結束。
+// 用滑鼠事件也是同一套（PointerEvent 本身就同時涵蓋滑鼠和觸控）。
+function useDragReorder(items, setItems) {
+  const [draggingId, setDraggingId] = useState(null);
+  const dragHandleProps = (id) => ({
+    onPointerDown: (e) => {
+      e.preventDefault();
+      setDraggingId(id);
+      e.currentTarget.setPointerCapture(e.pointerId);
+    },
+    onPointerMove: (e) => {
+      if (draggingId == null) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const row = el && el.closest('[data-reorder-id]');
+      if (!row) return;
+      const overId = row.getAttribute('data-reorder-id');
+      if (overId === String(draggingId)) return;
+      const fromIndex = items.findIndex((it) => String(it.id) === String(draggingId));
+      const toIndex = items.findIndex((it) => String(it.id) === overId);
+      if (fromIndex === -1 || toIndex === -1) return;
+      const next = [...items];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      setItems(next);
+    },
+    onPointerUp: () => setDraggingId(null),
+    onPointerCancel: () => setDraggingId(null),
+  });
+  return { draggingId, dragHandleProps };
+}
+
 /* ============================================================
    服務項目管理
    ============================================================ */
 
-function ServicesView({ data, store, onSave, onDelete }) {
+function ServicesView({ data, store, onSave, onDelete, onReorder }) {
   const [editing, setEditing] = useState(null); // service object or 'new'
+  const serviceDrag = useDragReorder(data.services, onReorder);
   const priceTiers = store.priceTiers;
 
   return (
@@ -2666,18 +2713,27 @@ function ServicesView({ data, store, onSave, onDelete }) {
         <button className="btn-primary" onClick={() => setEditing('new')}><Plus size={16} /> 新增項目</button>
       </div>
 
+      <p className="muted small" style={{ marginBottom: 8 }}>可以按住最前面的「⠿」拖曳調整服務項目排列順序，新增服務紀錄的下拉選單會照這個順序顯示。</p>
       <div className="table-wrap">
         <table className="data-table">
           <thead>
             <tr>
-              <th>項目</th><th>分類</th>
+              <th></th><th>項目</th><th>分類</th>
               {priceTiers.map((t) => <th key={t.id}>{t.label}</th>)}
               <th>時間</th><th>狀態</th><th></th>
             </tr>
           </thead>
           <tbody>
             {data.services.map((s) => (
-              <tr key={s.id}>
+              <tr key={s.id} data-reorder-id={s.id} style={{ opacity: serviceDrag.draggingId === s.id ? 0.5 : 1 }}>
+                <td>
+                  <span
+                    {...serviceDrag.dragHandleProps(s.id)}
+                    className="icon-btn ghost drag-handle"
+                    style={{ cursor: 'grab', touchAction: 'none' }}
+                    title="拖曳排序"
+                  ><GripVertical size={16} /></span>
+                </td>
                 <td className="strong">{s.name}</td>
                 <td>{s.category}</td>
                 {priceTiers.map((t) => <td key={t.id}>{fmtMoney((s.prices || {})[t.id])}</td>)}
@@ -3710,6 +3766,15 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       reportError(e);
     }
   };
+  // 拖曳排序用：直接把新的排列順序整批存回去。
+  const handleReorderServices = async (services) => {
+    updateData((d) => { d.services = services; });
+    try {
+      await apiSaveServicesOrder(services, store.id);
+    } catch (e) {
+      reportError(e);
+    }
+  };
 
   const handleSaveExpense = async (exp) => {
     try {
@@ -3846,7 +3911,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
             <RevisitView data={data} store={store} onOpenCustomer={openCustomer} onMarkReminded={handleMarkReminded} />
           )}
 
-          {view === 'services' && <ServicesView data={data} store={store} onSave={handleSaveService} onDelete={handleDeleteService} />}
+          {view === 'services' && <ServicesView data={data} store={store} onSave={handleSaveService} onDelete={handleDeleteService} onReorder={handleReorderServices} />}
 
           {view === 'expenses' && <ExpensesView data={data} onSave={handleSaveExpense} onDelete={handleDeleteExpense} />}
 

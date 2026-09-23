@@ -1,6 +1,39 @@
 import React, { useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2, GripVertical } from 'lucide-react';
 import { exportBackup, restoreFromBackup, restoreStoreSettings, verifyPin, updateStore } from './lib/localStore.js';
+
+// 拖曳排序：抓住拖曳手把（setPointerCapture 讓後面的移動/放開事件都固定送到這個手把，
+// 不會因為清單重新排序、手把在畫面上的位置跟著換了就追丟），移動時用 elementFromPoint
+// 找出目前壓在哪一列上面，跟原本拖的那一列不同就直接交換順序，放開就結束。
+// 用滑鼠事件也是同一套（PointerEvent 本身就同時涵蓋滑鼠和觸控）。
+function useDragReorder(items, setItems) {
+  const [draggingId, setDraggingId] = useState(null);
+  const dragHandleProps = (id) => ({
+    onPointerDown: (e) => {
+      e.preventDefault();
+      setDraggingId(id);
+      e.currentTarget.setPointerCapture(e.pointerId);
+    },
+    onPointerMove: (e) => {
+      if (draggingId == null) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const row = el && el.closest('[data-reorder-id]');
+      if (!row) return;
+      const overId = row.getAttribute('data-reorder-id');
+      if (overId === String(draggingId)) return;
+      const fromIndex = items.findIndex((it) => String(it.id) === String(draggingId));
+      const toIndex = items.findIndex((it) => String(it.id) === overId);
+      if (fromIndex === -1 || toIndex === -1) return;
+      const next = [...items];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      setItems(next);
+    },
+    onPointerUp: () => setDraggingId(null),
+    onPointerCancel: () => setDraggingId(null),
+  });
+  return { draggingId, dragHandleProps };
+}
 
 function downloadJSON(filename, obj) {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
@@ -85,6 +118,7 @@ export default function SettingsView({ store, onSave }) {
     store.priceTiers && store.priceTiers.length ? store.priceTiers : [{ id: newId('tier'), label: '原價' }]
   );
   const [products, setProducts] = useState(store.products || []);
+  const productDrag = useDragReorder(products, setProducts);
   const [templates, setTemplates] = useState(store.messageTemplates || []);
   const [contracts, setContracts] = useState(store.contracts || []);
   const [staff, setStaff] = useState(store.staff || []);
@@ -401,8 +435,19 @@ export default function SettingsView({ store, onSave }) {
           庫存和低庫存提醒都是選填：填了庫存數字，之後客人購買這個商品時系統會自動幫你扣庫存（編輯或刪除紀錄也會自動加回來）；
           不填庫存就代表這個商品不追蹤庫存。庫存數字本身也可以隨時回來這裡手動修改（例如盤點、進貨）。
         </p>
+        <p className="muted small" style={{ marginBottom: 12 }}>可以按住最前面的「⠿」拖曳調整商品排列順序，新增服務紀錄時就會照這個順序顯示。</p>
         {products.map((p) => (
-          <div key={p.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%' }}>
+          <div
+            key={p.id}
+            data-reorder-id={p.id}
+            style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%', opacity: productDrag.draggingId === p.id ? 0.5 : 1 }}
+          >
+            <span
+              {...productDrag.dragHandleProps(p.id)}
+              className="icon-btn ghost drag-handle"
+              style={{ cursor: 'grab', touchAction: 'none' }}
+              title="拖曳排序"
+            ><GripVertical size={16} /></span>
             <input
               value={p.name}
               onChange={(e) => setProductField(p.id, 'name', e.target.value)}

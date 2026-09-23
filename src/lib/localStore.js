@@ -161,6 +161,11 @@ export async function deleteService(id) {
   withData((d) => { d.services = d.services.filter((s) => s.id !== id); });
 }
 
+// 拖曳排序用：直接把整個服務項目陣列換成新的排列順序。
+export async function saveServicesOrder(services) {
+  return withData((d) => { d.services = services; });
+}
+
 export async function saveRecord(record) {
   return withData((d) => {
     const exists = d.records.some((r) => r.id === record.id);
