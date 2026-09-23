@@ -90,6 +90,31 @@ function tierLabel(priceTiers, tierId) {
   return t ? t.label : (tierId || '');
 }
 
+// 服務項目下拉選單：有填「分類」的服務用 <optgroup> 分成大項目/子項目顯示，
+// 沒填分類的店家完全不受影響，還是平舖的清單——這樣同一套系統，簡單用的人
+// 不用多做任何事，想用分類的人只要把服務項目的「分類」欄位填一填就好。
+function renderServiceOptions(services) {
+  const uncategorized = [];
+  const groups = [];
+  const groupIndex = {};
+  services.forEach((s) => {
+    const cat = (s.category || '').trim();
+    if (!cat) { uncategorized.push(s); return; }
+    if (!(cat in groupIndex)) { groupIndex[cat] = groups.length; groups.push({ cat, list: [] }); }
+    groups[groupIndex[cat]].list.push(s);
+  });
+  return (
+    <>
+      {uncategorized.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+      {groups.map((g) => (
+        <optgroup key={g.cat} label={g.cat}>
+          {g.list.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </optgroup>
+      ))}
+    </>
+  );
+}
+
 // 新店家一開始服務項目是空的，由店家自己在「服務項目」頁新增，不繼承任何預設項目。
 function emptyData() {
   return {
@@ -388,12 +413,19 @@ function Modal({ title, onClose, children, wide }) {
 }
 
 function ConfirmDialog({ title = '刪除確認', message, confirmLabel = '確定刪除', onConfirm, onCancel }) {
+  // 剛跳出來的瞬間先鎖住「確定」鍵一下子，避免手滑快速點兩下（例如觸控筆誤觸兩次）
+  // 直接把「開啟確認視窗」跟「按下確定」兩個動作一次點完，等於確認形同虛設。
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setReady(true), 500);
+    return () => clearTimeout(t);
+  }, []);
   return (
     <Modal title={title} onClose={onCancel}>
       <p className="muted" style={{ marginBottom: 20 }}>{message}</p>
       <div className="modal-actions">
         <button className="btn-secondary" onClick={onCancel}>取消</button>
-        <button className="btn-danger" onClick={onConfirm}>{confirmLabel}</button>
+        <button className="btn-danger" onClick={onConfirm} disabled={!ready}>{confirmLabel}</button>
       </div>
     </Modal>
   );
@@ -2395,7 +2427,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       <Field label="服務項目" hint={storeProducts.length > 0 ? '只買產品、沒有服務項目的話可以留空' : undefined}>
         <select value={serviceId} onChange={(e) => selectService(e.target.value)}>
           <option value="">請選擇</option>
-          {activeServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          {renderServiceOptions(activeServices)}
         </select>
       </Field>
 
@@ -2497,7 +2529,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
             <div className="product-row" key={es.key} style={{ flexWrap: 'wrap' }}>
               <select value={es.serviceId} onChange={(e) => updateExtraService(es.key, 'serviceId', e.target.value)} style={{ flex: '1 1 140px', minWidth: 0 }}>
                 <option value="">請選擇服務</option>
-                {activeServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {renderServiceOptions(activeServices)}
               </select>
               <input
                 type="number"
@@ -2797,7 +2829,9 @@ function ServiceFormModal({ store, service, onClose, onSave, onDelete }) {
   return (
     <Modal title={service ? '編輯服務項目' : '新增服務項目'} onClose={onClose}>
       <Field label="項目名稱"><input value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
-      <Field label="分類"><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="例如：腿部 / 臉部" /></Field>
+      <Field label="分類（選填）" hint="選填，用來把服務項目分成大項目/子項目。同一個分類名稱的服務，新增服務紀錄時會自動分組顯示在下拉選單裡；不填的話跟現在一樣平舖顯示，不影響操作">
+        <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="例如：熱蠟除毛（大項目），底下可以有：腿部、比基尼線等子項目" />
+      </Field>
       {priceTiers.map((t) => (
         <Field key={t.id} label={t.label}>
           <input type="number" value={prices[t.id]} onChange={setPrice(t.id)} />
