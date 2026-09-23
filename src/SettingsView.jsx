@@ -8,11 +8,18 @@ import { exportBackup, restoreFromBackup, restoreStoreSettings, verifyPin, updat
 // 用滑鼠事件也是同一套（PointerEvent 本身就同時涵蓋滑鼠和觸控）。
 function useDragReorder(items, setItems) {
   const [draggingId, setDraggingId] = useState(null);
+  // 放開／取消時一定要明確釋放指標鎖定，不要依賴瀏覽器自動釋放——沒放乾淨的話，
+  // 拖曳手把會一直吃掉後面的點擊事件，導致放開拖曳之後畫面其他按鈕點了沒反應。
+  const releaseCapture = (e) => {
+    if (e && e.pointerId != null && e.currentTarget?.releasePointerCapture) {
+      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) { /* 沒有鎖定就不用釋放 */ }
+    }
+  };
   const dragHandleProps = (id) => ({
     onPointerDown: (e) => {
       e.preventDefault();
       setDraggingId(id);
-      e.currentTarget.setPointerCapture(e.pointerId);
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* 沒有真正作用中的指標時 capture 會失敗 */ }
     },
     onPointerMove: (e) => {
       if (draggingId == null) return;
@@ -29,8 +36,8 @@ function useDragReorder(items, setItems) {
       next.splice(toIndex, 0, moved);
       setItems(next);
     },
-    onPointerUp: () => setDraggingId(null),
-    onPointerCancel: () => setDraggingId(null),
+    onPointerUp: (e) => { releaseCapture(e); setDraggingId(null); },
+    onPointerCancel: (e) => { releaseCapture(e); setDraggingId(null); },
   });
   return { draggingId, dragHandleProps };
 }

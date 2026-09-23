@@ -1988,6 +1988,25 @@ function SignaturePad({ initialValue, onChange }) {
   // 「清除重簽」旁邊就是簽名板，手滑很容易誤觸就把簽好的簽名整個清掉，
   // 所以清除前一定要先跳出確認，避免不小心點一下就要重簽。
   const [confirmClear, setConfirmClear] = useState(false);
+  // 觸控裝置在畫布上簽完名之後，瀏覽器有時候會補送一個延遲的「幽靈點擊」，
+  // 剛好又落在「清除重簽」這個跟簽名板貼在一起的按鈕上，導致確認視窗關掉後
+  // 立刻又被那個幽靈點擊重新點開，看起來就像「按取消也沒反應」。這種幽靈點擊
+  // 的特徵是沒有真正的 pointerdown 在先（憑空冒出來的 click）；真人手指點擊
+  // 一定會先有 pointerdown。所以只在關閉確認視窗後的短暫時間內，擋掉「沒有
+  // 對應 pointerdown」的點擊，真的手滑再點一次的話還是能立刻重新打開。
+  const ignoreClearClickRef = useRef(false);
+  const lastClearPointerDownAtRef = useRef(0);
+  const armIgnoreClearClick = () => {
+    ignoreClearClickRef.current = true;
+    setTimeout(() => { ignoreClearClickRef.current = false; }, 400);
+  };
+  const handleClearPointerDown = () => {
+    lastClearPointerDownAtRef.current = Date.now();
+  };
+  const openConfirmClear = () => {
+    if (ignoreClearClickRef.current && Date.now() - lastClearPointerDownAtRef.current > 500) return;
+    setConfirmClear(true);
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -2015,7 +2034,7 @@ function SignaturePad({ initialValue, onChange }) {
     drawingRef.current = true;
     hasDrawnRef.current = true;
     lastPosRef.current = getPos(e);
-    canvasRef.current.setPointerCapture(e.pointerId);
+    try { canvasRef.current.setPointerCapture(e.pointerId); } catch (err) { /* 沒有真正作用中的指標時 capture 會失敗，不影響畫圖本身 */ }
   };
   const handlePointerMove = (e) => {
     if (!drawingRef.current) return;
@@ -2030,9 +2049,15 @@ function SignaturePad({ initialValue, onChange }) {
     ctx.stroke();
     lastPosRef.current = pos;
   };
-  const handlePointerUp = () => {
+  // 簽完一筆一定要明確放開指標鎖定，不要依賴瀏覽器自動釋放——不然遇到某些情況
+  // （例如觸控筆的懸浮/離開手勢）指標鎖定卡在畫布上沒放掉，會導致簽完名之後
+  // 點畫面上其他按鈕（包括「取消」）都被畫布吃掉、完全沒反應。
+  const handlePointerUp = (e) => {
     if (!drawingRef.current) return;
     drawingRef.current = false;
+    if (e && e.pointerId != null) {
+      try { canvasRef.current.releasePointerCapture(e.pointerId); } catch (err) { /* 沒有鎖定就不用釋放 */ }
+    }
     if (hasDrawnRef.current) onChange(canvasRef.current.toDataURL('image/png'));
   };
 
@@ -2057,14 +2082,14 @@ function SignaturePad({ initialValue, onChange }) {
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
       />
-      <button type="button" className="text-link" onClick={() => setConfirmClear(true)} style={{ marginTop: 6 }}>清除重簽</button>
+      <button type="button" className="text-link" onPointerDown={handleClearPointerDown} onClick={openConfirmClear} style={{ marginTop: 6 }}>清除重簽</button>
       {confirmClear && (
         <ConfirmDialog
           title="清除簽名"
           message="確定要清除這個簽名，讓客人重簽嗎？清除後無法復原。"
           confirmLabel="確定清除"
-          onCancel={() => setConfirmClear(false)}
-          onConfirm={() => { clear(); setConfirmClear(false); }}
+          onCancel={() => { setConfirmClear(false); armIgnoreClearClick(); }}
+          onConfirm={() => { clear(); setConfirmClear(false); armIgnoreClearClick(); }}
         />
       )}
     </div>
@@ -2699,11 +2724,18 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
 // 用滑鼠事件也是同一套（PointerEvent 本身就同時涵蓋滑鼠和觸控）。
 function useDragReorder(items, setItems) {
   const [draggingId, setDraggingId] = useState(null);
+  // 放開／取消時一定要明確釋放指標鎖定，不要依賴瀏覽器自動釋放——沒放乾淨的話，
+  // 拖曳手把會一直吃掉後面的點擊事件，導致放開拖曳之後畫面其他按鈕點了沒反應。
+  const releaseCapture = (e) => {
+    if (e && e.pointerId != null && e.currentTarget?.releasePointerCapture) {
+      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) { /* 沒有鎖定就不用釋放 */ }
+    }
+  };
   const dragHandleProps = (id) => ({
     onPointerDown: (e) => {
       e.preventDefault();
       setDraggingId(id);
-      e.currentTarget.setPointerCapture(e.pointerId);
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* 沒有真正作用中的指標時 capture 會失敗 */ }
     },
     onPointerMove: (e) => {
       if (draggingId == null) return;
@@ -2720,8 +2752,8 @@ function useDragReorder(items, setItems) {
       next.splice(toIndex, 0, moved);
       setItems(next);
     },
-    onPointerUp: () => setDraggingId(null),
-    onPointerCancel: () => setDraggingId(null),
+    onPointerUp: (e) => { releaseCapture(e); setDraggingId(null); },
+    onPointerCancel: (e) => { releaseCapture(e); setDraggingId(null); },
   });
   return { draggingId, dragHandleProps };
 }
