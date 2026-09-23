@@ -90,10 +90,9 @@ function tierLabel(priceTiers, tierId) {
   return t ? t.label : (tierId || '');
 }
 
-// 服務項目下拉選單：有填「分類」的服務用 <optgroup> 分成大項目/子項目顯示，
-// 沒填分類的店家完全不受影響，還是平舖的清單——這樣同一套系統，簡單用的人
-// 不用多做任何事，想用分類的人只要把服務項目的「分類」欄位填一填就好。
-function renderServiceOptions(services) {
+// 服務項目分類：把有填「分類」的服務依序分組，沒填分類的另外歸一堆，
+// 給下面兩種下拉選單（平舖版 / 先選大類再選子項目版）共用。
+function groupServicesByCategory(services) {
   const uncategorized = [];
   const groups = [];
   const groupIndex = {};
@@ -103,6 +102,14 @@ function renderServiceOptions(services) {
     if (!(cat in groupIndex)) { groupIndex[cat] = groups.length; groups.push({ cat, list: [] }); }
     groups[groupIndex[cat]].list.push(s);
   });
+  return { uncategorized, groups };
+}
+
+// 服務項目下拉選單（平舖版）：有填「分類」的服務用 <optgroup> 分成大項目/子項目
+// 顯示，沒填分類的店家完全不受影響，還是平舖的清單。用在「加另一項服務」這種
+// 一行要塞好幾個欄位、放不下兩層選單的地方。
+function renderServiceOptions(services) {
+  const { uncategorized, groups } = groupServicesByCategory(services);
   return (
     <>
       {uncategorized.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -112,6 +119,60 @@ function renderServiceOptions(services) {
         </optgroup>
       ))}
     </>
+  );
+}
+
+// 服務項目主選單（分層版）：店家有把服務分類的話，先選大類、選定後才跳出
+// 第二層下拉選單只列這個大類底下的子項目，避免同一個選單一次列一長串。
+// 完全沒設定分類的店家不受任何影響，還是原本單一下拉選單、不會多一個步驟。
+function ServiceCascadeSelect({ services, value, onChange, placeholder = '請選擇' }) {
+  const { uncategorized, groups } = groupServicesByCategory(services);
+  const [pendingCategory, setPendingCategory] = useState('');
+
+  if (groups.length === 0) {
+    return (
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{placeholder}</option>
+        {uncategorized.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+      </select>
+    );
+  }
+
+  const selectedService = services.find((s) => s.id === value);
+  const selectedCategory = selectedService ? (selectedService.category || '').trim() : '';
+  const activeCategory = selectedCategory || pendingCategory;
+  const activeGroup = groups.find((g) => g.cat === activeCategory);
+  const firstValue = selectedService
+    ? (selectedCategory ? `cat:${selectedCategory}` : `svc:${selectedService.id}`)
+    : (pendingCategory ? `cat:${pendingCategory}` : '');
+
+  const handleFirstChange = (raw) => {
+    if (raw.startsWith('svc:')) {
+      setPendingCategory('');
+      onChange(raw.slice(4));
+    } else if (raw.startsWith('cat:')) {
+      setPendingCategory(raw.slice(4));
+      onChange(''); // 換大類要重新選子項目，避免子項目跟新選的大類對不起來
+    } else {
+      setPendingCategory('');
+      onChange('');
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <select value={firstValue} onChange={(e) => handleFirstChange(e.target.value)}>
+        <option value="">{placeholder}</option>
+        {uncategorized.map((s) => <option key={s.id} value={`svc:${s.id}`}>{s.name}</option>)}
+        {groups.map((g) => <option key={g.cat} value={`cat:${g.cat}`}>{g.cat}</option>)}
+      </select>
+      {activeGroup && (
+        <select value={value || ''} onChange={(e) => onChange(e.target.value)}>
+          <option value="">請選擇「{activeGroup.cat}」的項目</option>
+          {activeGroup.list.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      )}
+    </div>
   );
 }
 
@@ -2450,10 +2511,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       </Field>
 
       <Field label="服務項目" hint={storeProducts.length > 0 ? '只買產品、沒有服務項目的話可以留空' : undefined}>
-        <select value={serviceId} onChange={(e) => selectService(e.target.value)}>
-          <option value="">請選擇</option>
-          {renderServiceOptions(activeServices)}
-        </select>
+        <ServiceCascadeSelect services={activeServices} value={serviceId} onChange={selectService} />
       </Field>
 
       {activeStaff.length > 0 && (
