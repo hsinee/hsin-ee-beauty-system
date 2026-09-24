@@ -4,9 +4,9 @@ import {
   ResponsiveContainer, Cell
 } from 'recharts';
 import {
-  Search, Plus, X, ChevronRight, ChevronLeft, Trash2, Pencil, Bell,
+  Search, Plus, X, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, Trash2, Pencil, Bell,
   Users, LayoutGrid, Sparkles, Wallet, ClipboardList, Menu, CalendarDays, Clock, Download, Settings as SettingsIcon,
-  Award, History, GripVertical
+  Award, History
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
@@ -2776,51 +2776,15 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   );
 }
 
-// 拖曳排序：抓住拖曳手把（setPointerCapture 讓後面的移動/放開事件都固定送到這個手把，
-// 不會因為清單重新排序、手把在畫面上的位置跟著換了就追丟），移動時用 elementFromPoint
-// 找出目前壓在哪一列上面，跟原本拖的那一列不同就直接交換順序，放開就結束。
-// 用滑鼠事件也是同一套（PointerEvent 本身就同時涵蓋滑鼠和觸控）。
-//
-// 之前試過用 requestAnimationFrame 節流＋FLIP 動畫讓排序有滑動效果，結果在實際裝置上
-// 反而更卡（每次排序都要量測所有列的位置，強制瀏覽器重新計算版面，比原本單純交換陣列
-// 還貴），而且拖曳判定變慢之後，手指反而更容易被系統判定成「長按選字」而跳出選字狀態。
-// 所以拿掉那些花俏的動畫，改成最單純、開銷最小的寫法：判斷到要換順序就直接換，靠下面的
-// CSS（.reorder-row 全面關掉文字選取／長按選單）來解決選到字的問題，用最少的運算量換取
-// 手指跟畫面之間的延遲降到最低——拖曳排序真正「順不順」，反應延遲比有沒有動畫更關鍵。
-function useDragReorder(items, setItems) {
-  const [draggingId, setDraggingId] = useState(null);
-  // 放開／取消時一定要明確釋放指標鎖定，不要依賴瀏覽器自動釋放——沒放乾淨的話，
-  // 拖曳手把會一直吃掉後面的點擊事件，導致放開拖曳之後畫面其他按鈕點了沒反應。
-  const releaseCapture = (e) => {
-    if (e && e.pointerId != null && e.currentTarget?.releasePointerCapture) {
-      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) { /* 沒有鎖定就不用釋放 */ }
-    }
-  };
-  const dragHandleProps = (id) => ({
-    onPointerDown: (e) => {
-      e.preventDefault();
-      setDraggingId(id);
-      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* 沒有真正作用中的指標時 capture 會失敗 */ }
-    },
-    onPointerMove: (e) => {
-      if (draggingId == null) return;
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const row = el && el.closest('[data-reorder-id]');
-      if (!row) return;
-      const overId = row.getAttribute('data-reorder-id');
-      if (overId === String(draggingId)) return;
-      const fromIndex = items.findIndex((it) => String(it.id) === String(draggingId));
-      const toIndex = items.findIndex((it) => String(it.id) === overId);
-      if (fromIndex === -1 || toIndex === -1) return;
-      const next = [...items];
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
-      setItems(next);
-    },
-    onPointerUp: (e) => { releaseCapture(e); setDraggingId(null); },
-    onPointerCancel: (e) => { releaseCapture(e); setDraggingId(null); },
-  });
-  return { draggingId, dragHandleProps };
+// 排序調整：原本用「拖曳」手勢，但觸控裝置上一直跟捲動／選字手勢互搶，調了幾輪都還是
+// 不夠順、還會冒出新的小問題。改成最單純可靠的做法——上移／下移按鈕，直接交換陣列裡
+// 兩個位置，沒有任何手勢判斷，不會再有觸控裝置上的手勢衝突問題。
+function moveArrayItem(items, index, delta) {
+  const target = index + delta;
+  if (target < 0 || target >= items.length) return items;
+  const next = [...items];
+  [next[index], next[target]] = [next[target], next[index]];
+  return next;
 }
 
 /* ============================================================
@@ -2829,7 +2793,6 @@ function useDragReorder(items, setItems) {
 
 function ServicesView({ data, store, onSave, onDelete, onReorder }) {
   const [editing, setEditing] = useState(null); // service object or 'new'
-  const serviceDrag = useDragReorder(data.services, onReorder);
   const priceTiers = store.priceTiers;
 
   return (
@@ -2842,7 +2805,7 @@ function ServicesView({ data, store, onSave, onDelete, onReorder }) {
         <button className="btn-primary" onClick={() => setEditing('new')}><Plus size={16} /> 新增項目</button>
       </div>
 
-      <p className="muted small" style={{ marginBottom: 8 }}>可以按住最前面的「⠿」拖曳調整服務項目排列順序，新增服務紀錄的下拉選單會照這個順序顯示。</p>
+      <p className="muted small" style={{ marginBottom: 8 }}>可以用「↑↓」調整服務項目排列順序，新增服務紀錄的下拉選單會照這個順序顯示。</p>
       <div className="table-wrap">
         <table className="data-table">
           <thead>
@@ -2853,19 +2816,25 @@ function ServicesView({ data, store, onSave, onDelete, onReorder }) {
             </tr>
           </thead>
           <tbody>
-            {data.services.map((s) => (
-              <tr
-                key={s.id}
-                data-reorder-id={s.id}
-                className={`reorder-row${serviceDrag.draggingId === s.id ? ' dragging' : ''}`}
-              >
+            {data.services.map((s, i) => (
+              <tr key={s.id}>
                 <td>
-                  <span
-                    {...serviceDrag.dragHandleProps(s.id)}
-                    className="icon-btn ghost drag-handle"
-                    style={{ cursor: 'grab', touchAction: 'none' }}
-                    title="拖曳排序"
-                  ><GripVertical size={16} /></span>
+                  <div className="reorder-buttons">
+                    <button
+                      type="button"
+                      className="icon-btn ghost"
+                      onClick={() => onReorder(moveArrayItem(data.services, i, -1))}
+                      disabled={i === 0}
+                      title="上移"
+                    ><ChevronUp size={14} /></button>
+                    <button
+                      type="button"
+                      className="icon-btn ghost"
+                      onClick={() => onReorder(moveArrayItem(data.services, i, 1))}
+                      disabled={i === data.services.length - 1}
+                      title="下移"
+                    ><ChevronDown size={14} /></button>
+                  </div>
                 </td>
                 <td className="strong">{s.name}</td>
                 <td>{s.category}</td>
@@ -3571,12 +3540,9 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       .data-table tbody tr:last-child td { border-bottom: none; }
       .data-table tbody tr:hover { background: var(--cream); cursor: pointer; }
 
-      /* 可拖曳排序的列：整列關掉文字選取跟 iOS 長按選字選單，不然按著拖曳手把移動時
-         手指很容易連帶碰到旁邊的文字，被系統判定成「長按選字」而跳出選取狀態，反而卡住。
-         拖曳排序中被抓起來的那一列另外墊高、加陰影，看起來像被拿起來浮在其他列上面。 */
-      .reorder-row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-      .reorder-row.dragging { position: relative; z-index: 5; background: var(--cream); box-shadow: 0 8px 20px rgba(74,59,50,0.18); border-radius: 6px; }
-      .reorder-row.dragging td { background: var(--cream); box-shadow: 0 8px 20px rgba(74,59,50,0.18); }
+      /* 上移／下移排序按鈕：兩顆疊在一起放在同一欄，觸控裝置上點按不會有任何手勢衝突 */
+      .reorder-buttons { display: flex; flex-direction: column; gap: 2px; }
+      .reorder-buttons .icon-btn { padding: 2px; }
     
       /* ---- Buttons ---- */
       .btn-primary { display: inline-flex; align-items: center; gap: 6px; background: var(--rose-deep); color: var(--white); border: none; border-radius: 6px; padding: 10px 18px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
@@ -3590,6 +3556,8 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       .btn-danger:disabled { opacity: 0.4; cursor: not-allowed; }
       .icon-btn { background: transparent; border: none; cursor: pointer; color: var(--taupe); padding: 4px; display: flex; align-items: center; }
       .icon-btn.ghost:hover { color: var(--alert); }
+      .icon-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+      .icon-btn:disabled:hover { color: var(--taupe); }
       /* 固定用 --brown（不會被店家自訂的品牌主色影響），避免店家把主色調得跟背景色太接近時，
          這些文字按鈕（清除重簽、查看內容、調整餘額⋯）在畫面上幾乎看不見。 */
       .text-link { background: none; border: none; color: var(--brown); font-family: inherit; font-size: 13px; cursor: pointer; text-decoration: underline; padding: 4px 0; text-align: left; }

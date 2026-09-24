@@ -1,52 +1,16 @@
 import React, { useRef, useState } from 'react';
-import { Trash2, GripVertical } from 'lucide-react';
+import { Trash2, ChevronUp, ChevronDown } from 'lucide-react';
 import { exportBackup, restoreFromBackup, restoreStoreSettings, verifyPin, updateStore } from './lib/localStore.js';
 
-// 拖曳排序：抓住拖曳手把（setPointerCapture 讓後面的移動/放開事件都固定送到這個手把，
-// 不會因為清單重新排序、手把在畫面上的位置跟著換了就追丟），移動時用 elementFromPoint
-// 找出目前壓在哪一列上面，跟原本拖的那一列不同就直接交換順序，放開就結束。
-// 用滑鼠事件也是同一套（PointerEvent 本身就同時涵蓋滑鼠和觸控）。
-//
-// 之前試過用 requestAnimationFrame 節流＋FLIP 動畫讓排序有滑動效果，結果在實際裝置上
-// 反而更卡（每次排序都要量測所有列的位置，強制瀏覽器重新計算版面，比原本單純交換陣列
-// 還貴），而且拖曳判定變慢之後，手指反而更容易被系統判定成「長按選字」而跳出選字狀態。
-// 所以拿掉那些花俏的動畫，改成最單純、開銷最小的寫法：判斷到要換順序就直接換，靠下面的
-// CSS（.reorder-row 全面關掉文字選取／長按選單）來解決選到字的問題，用最少的運算量換取
-// 手指跟畫面之間的延遲降到最低——拖曳排序真正「順不順」，反應延遲比有沒有動畫更關鍵。
-function useDragReorder(items, setItems) {
-  const [draggingId, setDraggingId] = useState(null);
-  // 放開／取消時一定要明確釋放指標鎖定，不要依賴瀏覽器自動釋放——沒放乾淨的話，
-  // 拖曳手把會一直吃掉後面的點擊事件，導致放開拖曳之後畫面其他按鈕點了沒反應。
-  const releaseCapture = (e) => {
-    if (e && e.pointerId != null && e.currentTarget?.releasePointerCapture) {
-      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) { /* 沒有鎖定就不用釋放 */ }
-    }
-  };
-  const dragHandleProps = (id) => ({
-    onPointerDown: (e) => {
-      e.preventDefault();
-      setDraggingId(id);
-      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* 沒有真正作用中的指標時 capture 會失敗 */ }
-    },
-    onPointerMove: (e) => {
-      if (draggingId == null) return;
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const row = el && el.closest('[data-reorder-id]');
-      if (!row) return;
-      const overId = row.getAttribute('data-reorder-id');
-      if (overId === String(draggingId)) return;
-      const fromIndex = items.findIndex((it) => String(it.id) === String(draggingId));
-      const toIndex = items.findIndex((it) => String(it.id) === overId);
-      if (fromIndex === -1 || toIndex === -1) return;
-      const next = [...items];
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
-      setItems(next);
-    },
-    onPointerUp: (e) => { releaseCapture(e); setDraggingId(null); },
-    onPointerCancel: (e) => { releaseCapture(e); setDraggingId(null); },
-  });
-  return { draggingId, dragHandleProps };
+// 排序調整：原本用「拖曳」手勢，但觸控裝置上一直跟捲動／選字手勢互搶，調了幾輪都還是
+// 不夠順、還會冒出新的小問題。改成最單純可靠的做法——上移／下移按鈕，直接交換陣列裡
+// 兩個位置，沒有任何手勢判斷，不會再有觸控裝置上的手勢衝突問題。
+function moveArrayItem(items, index, delta) {
+  const target = index + delta;
+  if (target < 0 || target >= items.length) return items;
+  const next = [...items];
+  [next[index], next[target]] = [next[target], next[index]];
+  return next;
 }
 
 function downloadJSON(filename, obj) {
@@ -132,7 +96,6 @@ export default function SettingsView({ store, onSave }) {
     store.priceTiers && store.priceTiers.length ? store.priceTiers : [{ id: newId('tier'), label: '原價' }]
   );
   const [products, setProducts] = useState(store.products || []);
-  const productDrag = useDragReorder(products, setProducts);
   const [templates, setTemplates] = useState(store.messageTemplates || []);
   const [contracts, setContracts] = useState(store.contracts || []);
   const [staff, setStaff] = useState(store.staff || []);
@@ -449,20 +412,28 @@ export default function SettingsView({ store, onSave }) {
           庫存和低庫存提醒都是選填：填了庫存數字，之後客人購買這個商品時系統會自動幫你扣庫存（編輯或刪除紀錄也會自動加回來）；
           不填庫存就代表這個商品不追蹤庫存。庫存數字本身也可以隨時回來這裡手動修改（例如盤點、進貨）。
         </p>
-        <p className="muted small" style={{ marginBottom: 12 }}>可以按住最前面的「⠿」拖曳調整商品排列順序，新增服務紀錄時就會照這個順序顯示。</p>
-        {products.map((p) => (
+        <p className="muted small" style={{ marginBottom: 12 }}>可以用「↑↓」調整商品排列順序，新增服務紀錄時就會照這個順序顯示。</p>
+        {products.map((p, i) => (
           <div
             key={p.id}
-            data-reorder-id={p.id}
-            className={`reorder-row${productDrag.draggingId === p.id ? ' dragging' : ''}`}
-            style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%', padding: '4px 6px' }}
+            style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%' }}
           >
-            <span
-              {...productDrag.dragHandleProps(p.id)}
-              className="icon-btn ghost drag-handle"
-              style={{ cursor: 'grab', touchAction: 'none' }}
-              title="拖曳排序"
-            ><GripVertical size={16} /></span>
+            <div className="reorder-buttons">
+              <button
+                type="button"
+                className="icon-btn ghost"
+                onClick={() => setProducts(moveArrayItem(products, i, -1))}
+                disabled={i === 0}
+                title="上移"
+              ><ChevronUp size={14} /></button>
+              <button
+                type="button"
+                className="icon-btn ghost"
+                onClick={() => setProducts(moveArrayItem(products, i, 1))}
+                disabled={i === products.length - 1}
+                title="下移"
+              ><ChevronDown size={14} /></button>
+            </div>
             <input
               value={p.name}
               onChange={(e) => setProductField(p.id, 'name', e.target.value)}
