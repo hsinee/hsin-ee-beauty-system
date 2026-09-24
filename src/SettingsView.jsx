@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { Trash2, GripVertical } from 'lucide-react';
 import { exportBackup, restoreFromBackup, restoreStoreSettings, verifyPin, updateStore } from './lib/localStore.js';
 
@@ -6,15 +6,84 @@ import { exportBackup, restoreFromBackup, restoreStoreSettings, verifyPin, updat
 // 不會因為清單重新排序、手把在畫面上的位置跟著換了就追丟），移動時用 elementFromPoint
 // 找出目前壓在哪一列上面，跟原本拖的那一列不同就直接交換順序，放開就結束。
 // 用滑鼠事件也是同一套（PointerEvent 本身就同時涵蓋滑鼠和觸控）。
+//
+// 觸控裝置的 pointermove 觸發頻率很高，如果每一次都馬上重新排序、讓整個清單重新渲染，
+// 畫面會明顯卡頓；這裡改成用 requestAnimationFrame 節流，一個畫面更新週期最多處理一次。
+// 另外排序真的改變的時候，被擠開的其他列會用 FLIP 技巧（先記錄舊位置，DOM 更新完再跟新
+// 位置比較、補一個反向位移再讓它動畫歸零）讓它們用滑動動畫過去新位置，而不是瞬間跳過去，
+// 這樣拖曳起來才會跟原生 app 一樣順。
 function useDragReorder(items, setItems) {
   const [draggingId, setDraggingId] = useState(null);
-  // 放開／取消時一定要明確釋放指標鎖定，不要依賴瀏覽器自動釋放——沒放乾淨的話，
-  // 拖曳手把會一直吃掉後面的點擊事件，導致放開拖曳之後畫面其他按鈕點了沒反應。
+  const rowRefs = useRef(new Map());
+  const prevRectsRef = useRef(null);
+  const pendingPointRef = useRef(null);
+  const rafRef = useRef(null);
+
+  const registerRow = (id) => (el) => {
+    const key = String(id);
+    if (el) rowRefs.current.set(key, el);
+    else rowRefs.current.delete(key);
+  };
+
   const releaseCapture = (e) => {
     if (e && e.pointerId != null && e.currentTarget?.releasePointerCapture) {
       try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) { /* 沒有鎖定就不用釋放 */ }
     }
   };
+
+  const snapshotRects = () => {
+    const map = new Map();
+    rowRefs.current.forEach((el, id) => { map.set(id, el.getBoundingClientRect().top); });
+    prevRectsRef.current = map;
+  };
+
+  // items 排序改變後，比對每一列動之前跟動之後的位置，有差的話用 transform 補回原本
+  // 的位置再放掉，讓瀏覽器自己把這段位移動畫過去（FLIP: First-Last-Invert-Play）。
+  // 一定要用 useLayoutEffect（不是 useEffect），要在瀏覽器畫面真的畫出來之前就把
+  // 補償用的 transform 設定好，不然畫面會先閃一下跳到新位置，才又動畫回去，很不順。
+  useLayoutEffect(() => {
+    const prev = prevRectsRef.current;
+    if (!prev) return;
+    prevRectsRef.current = null;
+    rowRefs.current.forEach((el, id) => {
+      const beforeTop = prev.get(id);
+      if (beforeTop == null) return;
+      const afterTop = el.getBoundingClientRect().top;
+      const deltaY = beforeTop - afterTop;
+      if (!deltaY) return;
+      el.style.transition = 'none';
+      el.style.transform = `translateY(${deltaY}px)`;
+      requestAnimationFrame(() => {
+        el.style.transition = 'transform 180ms ease';
+        el.style.transform = '';
+      });
+    });
+  }, [items]);
+
+  const processPendingMove = (activeId) => {
+    rafRef.current = null;
+    const point = pendingPointRef.current;
+    if (!point || activeId == null) return;
+    const el = document.elementFromPoint(point.x, point.y);
+    const row = el && el.closest('[data-reorder-id]');
+    if (!row) return;
+    const overId = row.getAttribute('data-reorder-id');
+    if (overId === String(activeId)) return;
+    const fromIndex = items.findIndex((it) => String(it.id) === String(activeId));
+    const toIndex = items.findIndex((it) => String(it.id) === overId);
+    if (fromIndex === -1 || toIndex === -1) return;
+    snapshotRects();
+    const next = [...items];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    setItems(next);
+  };
+
+  const clearPendingFrame = () => {
+    if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    pendingPointRef.current = null;
+  };
+
   const dragHandleProps = (id) => ({
     onPointerDown: (e) => {
       e.preventDefault();
@@ -23,23 +92,15 @@ function useDragReorder(items, setItems) {
     },
     onPointerMove: (e) => {
       if (draggingId == null) return;
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const row = el && el.closest('[data-reorder-id]');
-      if (!row) return;
-      const overId = row.getAttribute('data-reorder-id');
-      if (overId === String(draggingId)) return;
-      const fromIndex = items.findIndex((it) => String(it.id) === String(draggingId));
-      const toIndex = items.findIndex((it) => String(it.id) === overId);
-      if (fromIndex === -1 || toIndex === -1) return;
-      const next = [...items];
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
-      setItems(next);
+      pendingPointRef.current = { x: e.clientX, y: e.clientY };
+      if (rafRef.current == null) {
+        rafRef.current = requestAnimationFrame(() => processPendingMove(draggingId));
+      }
     },
-    onPointerUp: (e) => { releaseCapture(e); setDraggingId(null); },
-    onPointerCancel: (e) => { releaseCapture(e); setDraggingId(null); },
+    onPointerUp: (e) => { releaseCapture(e); setDraggingId(null); clearPendingFrame(); },
+    onPointerCancel: (e) => { releaseCapture(e); setDraggingId(null); clearPendingFrame(); },
   });
-  return { draggingId, dragHandleProps };
+  return { draggingId, dragHandleProps, registerRow };
 }
 
 function downloadJSON(filename, obj) {
@@ -446,8 +507,10 @@ export default function SettingsView({ store, onSave }) {
         {products.map((p) => (
           <div
             key={p.id}
+            ref={productDrag.registerRow(p.id)}
             data-reorder-id={p.id}
-            style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%', opacity: productDrag.draggingId === p.id ? 0.5 : 1 }}
+            className={`reorder-row${productDrag.draggingId === p.id ? ' dragging' : ''}`}
+            style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%', padding: '4px 6px' }}
           >
             <span
               {...productDrag.dragHandleProps(p.id)}
