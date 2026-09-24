@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Trash2, ChevronUp, ChevronDown } from 'lucide-react';
 import { exportBackup, restoreFromBackup, restoreStoreSettings, verifyPin, updateStore } from './lib/localStore.js';
 
@@ -96,6 +96,17 @@ export default function SettingsView({ store, onSave }) {
     store.priceTiers && store.priceTiers.length ? store.priceTiers : [{ id: newId('tier'), label: '原價' }]
   );
   const [products, setProducts] = useState(store.products || []);
+  // 上移／下移之後，被移動的那一列閃一下顏色，讓人看得出來是「這一列」動了。
+  const [justMovedProductId, setJustMovedProductId] = useState(null);
+  const justMovedProductTimerRef = useRef(null);
+  const moveProduct = (i, delta) => {
+    const movedId = products[i].id;
+    setProducts(moveArrayItem(products, i, delta));
+    setJustMovedProductId(movedId);
+    if (justMovedProductTimerRef.current) clearTimeout(justMovedProductTimerRef.current);
+    justMovedProductTimerRef.current = setTimeout(() => setJustMovedProductId(null), 900);
+  };
+  useEffect(() => () => { if (justMovedProductTimerRef.current) clearTimeout(justMovedProductTimerRef.current); }, []);
   const [templates, setTemplates] = useState(store.messageTemplates || []);
   const [contracts, setContracts] = useState(store.contracts || []);
   const [staff, setStaff] = useState(store.staff || []);
@@ -416,20 +427,21 @@ export default function SettingsView({ store, onSave }) {
         {products.map((p, i) => (
           <div
             key={p.id}
-            style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%' }}
+            className={justMovedProductId === p.id ? 'just-moved' : undefined}
+            style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 8, maxWidth: '100%', borderRadius: 6 }}
           >
             <div className="reorder-buttons">
               <button
                 type="button"
                 className="icon-btn ghost"
-                onClick={() => setProducts(moveArrayItem(products, i, -1))}
+                onClick={() => moveProduct(i, -1)}
                 disabled={i === 0}
                 title="上移"
               ><ChevronUp size={14} /></button>
               <button
                 type="button"
                 className="icon-btn ghost"
-                onClick={() => setProducts(moveArrayItem(products, i, 1))}
+                onClick={() => moveProduct(i, 1)}
                 disabled={i === products.length - 1}
                 title="下移"
               ><ChevronDown size={14} /></button>

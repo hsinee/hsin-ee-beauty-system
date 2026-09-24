@@ -2794,6 +2794,18 @@ function moveArrayItem(items, index, delta) {
 function ServicesView({ data, store, onSave, onDelete, onReorder }) {
   const [editing, setEditing] = useState(null); // service object or 'new'
   const priceTiers = store.priceTiers;
+  // 上移／下移之後，被移動的那一列閃一下顏色，讓人看得出來「是這一列動了」，
+  // 不會覺得畫面莫名其妙跳來跳去、搞不清楚剛剛按到底發生什麼事。
+  const [justMovedId, setJustMovedId] = useState(null);
+  const justMovedTimerRef = useRef(null);
+  const moveService = (i, delta) => {
+    const movedId = data.services[i].id;
+    onReorder(moveArrayItem(data.services, i, delta));
+    setJustMovedId(movedId);
+    if (justMovedTimerRef.current) clearTimeout(justMovedTimerRef.current);
+    justMovedTimerRef.current = setTimeout(() => setJustMovedId(null), 900);
+  };
+  useEffect(() => () => { if (justMovedTimerRef.current) clearTimeout(justMovedTimerRef.current); }, []);
 
   return (
     <div>
@@ -2817,20 +2829,20 @@ function ServicesView({ data, store, onSave, onDelete, onReorder }) {
           </thead>
           <tbody>
             {data.services.map((s, i) => (
-              <tr key={s.id}>
+              <tr key={s.id} className={justMovedId === s.id ? 'just-moved' : undefined}>
                 <td>
                   <div className="reorder-buttons">
                     <button
                       type="button"
                       className="icon-btn ghost"
-                      onClick={() => onReorder(moveArrayItem(data.services, i, -1))}
+                      onClick={() => moveService(i, -1)}
                       disabled={i === 0}
                       title="上移"
                     ><ChevronUp size={14} /></button>
                     <button
                       type="button"
                       className="icon-btn ghost"
-                      onClick={() => onReorder(moveArrayItem(data.services, i, 1))}
+                      onClick={() => moveService(i, 1)}
                       disabled={i === data.services.length - 1}
                       title="下移"
                     ><ChevronDown size={14} /></button>
@@ -3543,6 +3555,12 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       /* 上移／下移排序按鈕：兩顆疊在一起放在同一欄，觸控裝置上點按不會有任何手勢衝突 */
       .reorder-buttons { display: flex; flex-direction: column; gap: 2px; }
       .reorder-buttons .icon-btn { padding: 2px; }
+
+      /* 上移／下移之後，被移動的那一列閃一下顏色，讓人看得出來是「這一列」動了。
+         用固定的顏色（不是店家可自訂的品牌色），不管店家把主題調成什麼顏色都看得到。 */
+      @keyframes just-moved-flash { 0% { background-color: rgba(224, 160, 84, 0.55); } 100% { background-color: transparent; } }
+      .just-moved { animation: just-moved-flash 900ms ease-out; }
+      tr.just-moved td { animation: just-moved-flash 900ms ease-out; }
     
       /* ---- Buttons ---- */
       .btn-primary { display: inline-flex; align-items: center; gap: 6px; background: var(--rose-deep); color: var(--white); border: none; border-radius: 6px; padding: 10px 18px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
