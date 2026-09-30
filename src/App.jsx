@@ -1523,7 +1523,7 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
               <div className="timeline-content">
                 <div className="timeline-row">
                   <span className="strong">
-                    {r.serviceName}
+                    {[r.serviceName, ...(r.extraServices || []).map((es) => es.serviceName)].join('、')}
                     {r.priceTier && r.priceTier !== (store.priceTiers[0] && store.priceTiers[0].id) && (
                       <span className={'tier-tag tier-' + r.priceTier}>
                         {tierLabel(store.priceTiers, r.priceTier)}
@@ -1535,9 +1535,6 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
                   </span>
                   <span className="strong">{fmtMoney(recordTotal(r))}</span>
                 </div>
-                {r.extraServices && r.extraServices.length > 0 && (
-                  <div className="muted small">其他服務：{r.extraServices.map((es) => `${es.serviceName} ${fmtMoney(es.amount)}`).join('、')}</div>
-                )}
                 {r.addons && r.addons.length > 0 && (
                   <div className="muted small">加購：{r.addons.map((a) => `${a.type}${a.description ? '(' + a.description + ')' : ''} ${fmtMoney(a.amount)}`).join('、')}</div>
                 )}
