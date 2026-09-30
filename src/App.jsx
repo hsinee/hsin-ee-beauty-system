@@ -603,8 +603,13 @@ function productsTotal(record) {
   const raw = (record.products || []).reduce((s, p) => s + Number(p.price || 0) * Number(p.qty || 1), 0);
   return Math.max(0, raw - Number(record.productDiscount || 0));
 }
+// 「加另一項服務」現在是同一筆紀錄底下的其他服務項目（不再各自拆成獨立紀錄），
+// 一樣要算進這筆紀錄的總金額裡。
+function extraServicesTotal(record) {
+  return (record.extraServices || []).reduce((s, es) => s + Number(es.amount || 0), 0);
+}
 function recordTotal(record) {
-  return Number(record.amount || 0) + addonsTotal(record) + productsTotal(record);
+  return Number(record.amount || 0) + extraServicesTotal(record) + addonsTotal(record) + productsTotal(record);
 }
 // 這筆紀錄目前實際從客人儲值餘額扣了多少錢（沒有用儲值扣款就是 0）。
 // 新增/編輯/刪除紀錄時都要用「新舊差額」去調整餘額，不能每次都整筆再扣一次，
@@ -779,6 +784,9 @@ function Dashboard({ data, store }) {
     let productRevenue = 0;
     inRange.forEach((r) => {
       serviceMap[r.serviceName] = (serviceMap[r.serviceName] || 0) + Number(r.amount || 0);
+      (r.extraServices || []).forEach((es) => {
+        serviceMap[es.serviceName] = (serviceMap[es.serviceName] || 0) + Number(es.amount || 0);
+      });
       addonRevenue += addonsTotal(r);
       productRevenue += productsTotal(r);
     });
@@ -1075,6 +1083,8 @@ function exportAllSystemData(data, store) {
         原價: r.listPrice,
         服務折扣: r.discount || 0,
         服務金額: r.amount,
+        其他服務項目: (r.extraServices || []).map((es) => `${es.serviceName} $${es.amount}`).join('、'),
+        其他服務金額: extraServicesTotal(r),
         加購項目: (r.addons || []).map((a) => `${a.type}${a.description ? '(' + a.description + ')' : ''} $${a.amount}`).join('、'),
         加購金額: addonsTotal(r),
         購買產品: (r.products || []).map((p) => `${p.name} x${p.qty || 1} $${p.price}`).join('、'),
@@ -1490,7 +1500,7 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
                 <div className="appointment-main">
                   <span className="strong">{fmtDate(a.date)}</span>
                   {a.source === 'record' && a.status && <span className={'tier-tag status-' + a.status}>{recordStatusLabel(a.status)}</span>}
-                  {a.serviceName && <div className="muted small">{a.serviceName}{a.source === 'record' ? ` ・ ${fmtMoney(a.amount)}` : ''}</div>}
+                  {a.serviceName && <div className="muted small">{a.serviceName}{a.source === 'record' ? ` ・ ${fmtMoney(recordTotal(a))}` : ''}</div>}
                   {a.notes && <div className="muted small">備註：{a.notes}</div>}
                 </div>
                 <div className="appointment-actions">
@@ -1525,6 +1535,9 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
                   </span>
                   <span className="strong">{fmtMoney(recordTotal(r))}</span>
                 </div>
+                {r.extraServices && r.extraServices.length > 0 && (
+                  <div className="muted small">其他服務：{r.extraServices.map((es) => `${es.serviceName} ${fmtMoney(es.amount)}`).join('、')}</div>
+                )}
                 {r.addons && r.addons.length > 0 && (
                   <div className="muted small">加購：{r.addons.map((a) => `${a.type}${a.description ? '(' + a.description + ')' : ''} ${fmtMoney(a.amount)}`).join('、')}</div>
                 )}
@@ -2174,8 +2187,17 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const [hasDiscount, setHasDiscount] = useState(record ? !!record.discount : false);
   const [discountAmount, setDiscountAmount] = useState(record && record.discount ? String(record.discount) : '');
   const [priceTier, setPriceTier] = useState((record && record.priceTier) || priceTiers[0].id);
-  // 一次預約要選好幾項服務：只在新增模式提供，各自存成獨立的紀錄，共用同一個客人／日期／付款方式
-  const [extraServices, setExtraServices] = useState([]);
+  // 一次預約要選好幾項服務：存成同一筆紀錄底下的「其他服務項目」，共用同一個客人／日期／付款方式，
+  // 編輯既有紀錄時也可以加或改，把既有的 extraServices 轉成這裡用的表單格式（用原本的 id 當 key，
+  // 這樣編輯後存檔還是同一批項目，不會被當成整批刪掉又整批新增）。
+  const [extraServices, setExtraServices] = useState(() =>
+    (record?.extraServices || []).map((es) => ({
+      key: es.id,
+      serviceId: es.serviceId,
+      listPrice: es.listPrice != null ? String(es.listPrice) : '',
+      discountAmount: es.discount ? String(es.discount) : '',
+    }))
+  );
   const [paymentMethod, setPaymentMethod] = useState((record && record.paymentMethod) || PAYMENT_METHODS[0]);
   const [source, setSource] = useState(() => {
     const s = record && record.source;
@@ -2355,6 +2377,21 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
     .filter((f) => (oldRec[f.key] || '') !== (newRec[f.key] || ''))
     .map((f) => ({ field: f.label, from: f.format(oldRec[f.key]), to: f.format(newRec[f.key]) }));
 
+  // 「加另一項服務」的每一行轉成存進紀錄裡的格式，用原本的 key 當 id（編輯時就是原本
+  // 那筆的 id，新增的就是 addExtraService 給的 uid），這樣同一項目編輯前後 id 不會變。
+  const buildExtraServicesData = () => validExtraServices.map((es) => {
+    const svc = activeServices.find((s) => s.id === es.serviceId);
+    const discount = Math.min(Number(es.discountAmount || 0), Number(es.listPrice || 0));
+    return {
+      id: es.key,
+      serviceId: es.serviceId,
+      serviceName: svc ? svc.name : '',
+      listPrice: Number(es.listPrice),
+      discount,
+      amount: Math.max(0, Number(es.listPrice) - discount),
+    };
+  });
+
   const submit = () => {
     if (!canSubmit) return;
     const primaryRecord = {
@@ -2368,6 +2405,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       priceTier,
       discount: discountApplied,
       amount: finalAmount,
+      extraServices: buildExtraServicesData(),
       addons: addons
         .filter((a) => a.amount !== '' && Number(a.amount) > 0)
         .map((a) => ({ id: a.id, type: a.type, description: a.description.trim(), amount: Number(a.amount) })),
@@ -2392,48 +2430,8 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         const operatorName = activeStaff.find((s) => s.id === operatorId)?.name || '（未指定操作人）';
         primaryRecord.history = [...primaryRecord.history, { id: uid(), at: new Date().toISOString(), operator: operatorName, changes }];
       }
-      onSave(primaryRecord);
-      return;
     }
-
-    if (validExtraServices.length === 0) {
-      onSave(primaryRecord);
-      return;
-    }
-
-    // 「加另一項服務」各自存成獨立的紀錄，共用這次的客人／日期／付款方式；
-    // 加購、購買產品、簽名這些只算在最上面第一項服務裡，不會重複套用到其他服務上。
-    const extraRecords = validExtraServices.map((es) => {
-      const svc = activeServices.find((s) => s.id === es.serviceId);
-      const discount = Math.min(Number(es.discountAmount || 0), Number(es.listPrice || 0));
-      return {
-        id: uid(),
-        customerId,
-        date,
-        time,
-        serviceId: es.serviceId,
-        serviceName: svc ? svc.name : '',
-        listPrice: Number(es.listPrice),
-        priceTier,
-        discount,
-        amount: Math.max(0, Number(es.listPrice) - discount),
-        addons: [],
-        products: [],
-        productDiscount: 0,
-        depositPaid: false,
-        depositAmount: 0,
-        paymentMethod,
-        status,
-        paymentStatus,
-        staffId,
-        source: primaryRecord.source,
-        notes: '',
-        reminderSent: false,
-        completionSignature: '',
-        history: [],
-      };
-    });
-    onSave([primaryRecord, ...extraRecords]);
+    onSave(primaryRecord);
   };
 
   const [quickAddBusy, setQuickAddBusy] = useState(false);
@@ -2603,41 +2601,39 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         </Field>
       )}
 
-      {!isEditing && (
-        <div className="addon-section">
-          <div className="addon-header">
-            <span className="field-label">加另一項服務</span>
-          </div>
-          {extraServices.map((es) => (
-            <div className="product-row" key={es.key} style={{ flexWrap: 'wrap' }}>
-              <select value={es.serviceId} onChange={(e) => updateExtraService(es.key, 'serviceId', e.target.value)} style={{ flex: '1 1 140px', minWidth: 0 }}>
-                <option value="">請選擇服務</option>
-                {renderServiceOptions(activeServices)}
-              </select>
-              <input
-                type="number"
-                value={es.listPrice}
-                onChange={(e) => updateExtraService(es.key, 'listPrice', e.target.value)}
-                placeholder="價格"
-                style={{ width: 90, minWidth: 0 }}
-              />
-              <input
-                type="number"
-                value={es.discountAmount}
-                onChange={(e) => updateExtraService(es.key, 'discountAmount', e.target.value)}
-                placeholder="折扣（選填）"
-                style={{ width: 110, minWidth: 0 }}
-              />
-              <button type="button" className="icon-btn ghost" onClick={() => removeExtraService(es.key)} title="移除"><Trash2 size={14} /></button>
-            </div>
-          ))}
-          <button type="button" className="btn-secondary small" onClick={addExtraService} style={{ marginTop: 8 }}>+ 加另一項服務</button>
-          <p className="muted small" style={{ marginTop: 8 }}>
-            這裡加的服務會各自存成一筆獨立的紀錄，共用這次的客人／日期／付款方式；加購、購買產品、簽名還是只算在最上面第一項服務裡
-          </p>
-          {hasIncompleteExtraService && <p style={{ color: '#b56f65', fontSize: 13 }}>加的服務項目要填價格才能送出</p>}
+      <div className="addon-section">
+        <div className="addon-header">
+          <span className="field-label">加另一項服務</span>
         </div>
-      )}
+        {extraServices.map((es) => (
+          <div className="product-row" key={es.key} style={{ flexWrap: 'wrap' }}>
+            <select value={es.serviceId} onChange={(e) => updateExtraService(es.key, 'serviceId', e.target.value)} style={{ flex: '1 1 140px', minWidth: 0 }}>
+              <option value="">請選擇服務</option>
+              {renderServiceOptions(activeServices)}
+            </select>
+            <input
+              type="number"
+              value={es.listPrice}
+              onChange={(e) => updateExtraService(es.key, 'listPrice', e.target.value)}
+              placeholder="價格"
+              style={{ width: 90, minWidth: 0 }}
+            />
+            <input
+              type="number"
+              value={es.discountAmount}
+              onChange={(e) => updateExtraService(es.key, 'discountAmount', e.target.value)}
+              placeholder="折扣（選填）"
+              style={{ width: 110, minWidth: 0 }}
+            />
+            <button type="button" className="icon-btn ghost" onClick={() => removeExtraService(es.key)} title="移除"><Trash2 size={14} /></button>
+          </div>
+        ))}
+        <button type="button" className="btn-secondary small" onClick={addExtraService} style={{ marginTop: 8 }}>+ 加另一項服務</button>
+        <p className="muted small" style={{ marginTop: 8 }}>
+          這裡加的服務會存在同一筆紀錄裡，共用這次的客人／日期／付款方式；加購、購買產品、簽名還是只算在最上面第一項服務裡
+        </p>
+        {hasIncompleteExtraService && <p style={{ color: '#b56f65', fontSize: 13 }}>加的服務項目要填價格才能送出</p>}
+      </div>
 
       {storeProducts.length > 0 && (
         <div className="addon-section">
