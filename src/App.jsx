@@ -3040,13 +3040,6 @@ function ExpensesView({ data, onSave, onDelete }) {
   const filtered = categoryFilter ? sorted.filter((e) => e.category === categoryFilter) : sorted;
   const total = data.expenses.reduce((s, e) => s + Number(e.amount), 0);
 
-  const byCategory = useMemo(() => {
-    const map = {};
-    EXPENSE_CATEGORIES.forEach((c) => { map[c.name] = 0; });
-    data.expenses.forEach((e) => { map[e.category] = (map[e.category] || 0) + Number(e.amount || 0); });
-    return EXPENSE_CATEGORIES.map((c) => ({ name: c.name, total: map[c.name] || 0 }));
-  }, [data.expenses]);
-
   const range = getRangeDates(period, customStart, customEnd);
 
   const periodCompare = useMemo(() => {
@@ -3069,6 +3062,10 @@ function ExpensesView({ data, onSave, onDelete }) {
     const prevLabel = period === 'custom' ? `${fmtDate(prevRange.start)}–${fmtDate(prevRange.end)}` : PREV_PERIOD_LABEL[period];
     return { currLabel, prevLabel, currTotal, prevTotal, rows };
   }, [data.expenses, period, range.start, range.end, customStart, customEnd, compareStart, compareEnd]);
+
+  // 「各分類累積花費」卡片跟上面選的期間（今日／本週／本月…）連動，不是固定看全部歷史，
+  // 直接拿「期間比較」表格裡已經算好的本期分類加總來用，不用再算一次。
+  const byCategory = periodCompare.rows.map((r) => ({ name: r.label, total: r.curr }));
 
   return (
     <div>
@@ -3147,8 +3144,8 @@ function ExpensesView({ data, onSave, onDelete }) {
         </table>
       </div>
 
-      <h4 className="panel-title">各分類累積花費</h4>
-      <p className="muted small" style={{ marginTop: -8, marginBottom: 12 }}>點分類卡片可以只看該分類的支出明細，再點一次取消篩選</p>
+      <h4 className="panel-title">{periodCompare.currLabel}各分類花費</h4>
+      <p className="muted small" style={{ marginTop: -8, marginBottom: 12 }}>跟著上面選的期間變動；點分類卡片可以只看該分類的支出明細，再點一次取消篩選</p>
       <div className="category-summary-grid">
         {byCategory.map((c) => (
           <div
@@ -3179,7 +3176,10 @@ function ExpensesView({ data, onSave, onDelete }) {
                 <tr key={e.id}>
                   <td>{fmtDate(e.date)}</td>
                   <td>{e.category}</td>
-                  <td>{e.item}</td>
+                  <td>
+                    {e.item}
+                    {e.notes && <div><button type="button" className="text-link" onClick={() => alert(e.notes)}>查看備註</button></div>}
+                  </td>
                   <td>
                     {fmtMoney(e.amount)}
                     {e.unitPrice > 0 && e.qty > 0 && <div className="muted small">{e.unitPrice} × {e.qty}</div>}
