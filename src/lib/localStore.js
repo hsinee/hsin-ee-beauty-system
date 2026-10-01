@@ -10,6 +10,7 @@
 const STORE_KEY = 'beauty_system_store_v1';
 const DATA_KEY = 'beauty_system_data_v1';
 const UNLOCK_KEY = 'beauty_system_unlocked_v1';
+const LAST_BACKUP_KEY = 'beauty_system_last_backup_at_v1';
 
 function loadJSON(key, fallback) {
   try {
@@ -206,6 +207,15 @@ export async function exportBackup(store) {
     store: storeSettings,
     data,
   };
+}
+
+// 記錄最近一次「真的匯出備份檔」的時間，給首頁的備份提醒用，用來判斷已經多久沒備份了。
+// 存不進去（例如無痕模式）就算了，不影響備份本身能不能正常下載。
+export function getLastBackupAt() {
+  try { return localStorage.getItem(LAST_BACKUP_KEY); } catch (e) { return null; }
+}
+export function recordBackupDone() {
+  try { localStorage.setItem(LAST_BACKUP_KEY, new Date().toISOString()); } catch (e) { /* 存不進去就算了 */ }
 }
 
 // 還原是整包覆蓋目前這台裝置上的客戶／服務／紀錄／成本資料，不是合併。

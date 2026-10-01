@@ -21,6 +21,7 @@ import {
   deleteRecord as apiDeleteRecord,
   saveExpense as apiSaveExpense,
   deleteExpense as apiDeleteExpense,
+  getLastBackupAt,
 } from './lib/localStore.js';
 import SettingsView from './SettingsView.jsx';
 
@@ -3324,6 +3325,40 @@ function BrowserModeWarning() {
   );
 }
 
+// 系統備份提醒：資料全部存在這台裝置的瀏覽器裡、沒有雲端同步，裝置遺失或瀏覽器資料被
+// 清掉就救不回來，所以超過一段時間沒有匯出過備份檔就提醒一下。抓「每週一次」當預設標準：
+// 太頻繁會變成每天都要按掉很煩、太久又失去提醒的意義，一週一次是一般小型工作室可以接受、
+// 又不會累積太多未備份資料的折衷頻率。還沒有任何客戶／紀錄資料的全新帳號不提醒，沒有東西
+// 好備份。
+const BACKUP_REMINDER_DAYS = 7;
+
+function BackupReminder({ data, onGoBackup }) {
+  const [dismissed, setDismissed] = useState(() => {
+    try { return sessionStorage.getItem('beauty_system_backup_reminder_dismissed') === '1'; } catch (e) { return false; }
+  });
+  const hasData = (data.customers.length + data.records.length + data.expenses.length) > 0;
+  const lastBackupAt = getLastBackupAt();
+  const daysSince = lastBackupAt ? daysBetween(lastBackupAt, new Date().toISOString()) : null;
+  const overdue = daysSince === null || daysSince >= BACKUP_REMINDER_DAYS;
+  if (!hasData || !overdue || dismissed) return null;
+  const dismiss = () => {
+    try { sessionStorage.setItem('beauty_system_backup_reminder_dismissed', '1'); } catch (e) {}
+    setDismissed(true);
+  };
+  const message = lastBackupAt
+    ? `⚠️ 已經 ${daysSince} 天沒有備份系統資料了，建議至少每 ${BACKUP_REMINDER_DAYS} 天備份一次，避免裝置遺失或瀏覽器資料被清掉時救不回來。`
+    : '⚠️ 這台裝置還沒有備份過系統資料，建議現在就去備份一次，避免裝置遺失或瀏覽器資料被清掉時救不回來。';
+  return (
+    <div style={{ background: '#fdf3e7', border: '1px solid #e8c9a0', color: '#8a5a2b', borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: 13, display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      <span>{message}</span>
+      <div style={{ display: 'flex', gap: 14, flexShrink: 0 }}>
+        <button type="button" onClick={onGoBackup} style={{ background: 'none', border: 'none', color: '#8a5a2b', cursor: 'pointer', fontSize: 13, textDecoration: 'underline' }}>前往備份</button>
+        <button type="button" onClick={dismiss} style={{ background: 'none', border: 'none', color: '#8a5a2b', cursor: 'pointer', fontSize: 13, textDecoration: 'underline' }}>之後再說</button>
+      </div>
+    </div>
+  );
+}
+
 function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
   const rose = primaryColor || '#c58f82';
   const cream = backgroundColor || '#f1ebe5';
@@ -3990,6 +4025,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
 
         <main className="main-area">
           <BrowserModeWarning />
+          <BackupReminder data={data} onGoBackup={() => goto('settings')} />
 
           {view === 'dashboard' && <Dashboard data={data} store={store} />}
 

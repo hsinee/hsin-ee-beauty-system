@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Trash2, ChevronUp, ChevronDown } from 'lucide-react';
-import { exportBackup, restoreFromBackup, restoreStoreSettings, verifyPin, updateStore } from './lib/localStore.js';
+import { exportBackup, restoreFromBackup, restoreStoreSettings, verifyPin, updateStore, getLastBackupAt, recordBackupDone } from './lib/localStore.js';
 
 // 排序調整：原本用「拖曳」手勢，但觸控裝置上一直跟捲動／選字手勢互搶，調了幾輪都還是
 // 不夠順、還會冒出新的小問題。改成最單純可靠的做法——上移／下移按鈕，直接交換陣列裡
@@ -178,6 +178,7 @@ export default function SettingsView({ store, onSave }) {
       const safeName = (store.name || '工作室').replace(/[\\/:*?"<>|]/g, '');
       const stamp = new Date().toISOString().slice(0, 10);
       downloadJSON(`${safeName}_備份_${stamp}.json`, backup);
+      recordBackupDone();
       setBackupDone('已下載備份檔');
     } catch (err) {
       setBackupError(err.message);
@@ -616,7 +617,12 @@ export default function SettingsView({ store, onSave }) {
         <p className="muted small" style={{ marginBottom: 12 }}>
           匯出一份完整備份檔（.json），可以自己留存，或是換手機/平板時，先在舊裝置匯出，
           登入新裝置後在這裡匯入即可搬過去。跟 Dashboard 那個「匯出全部系統資料」不一樣：
-          那個 Excel 是給人看的報表，這裡的備份檔是給系統讀回去用的。
+          那個 Excel 是給人看的報表，這裡的備份檔是給系統讀回去用的。建議至少每週備份一次，
+          資料都存在這台裝置的瀏覽器裡、沒有雲端同步，萬一裝置遺失或瀏覽器資料被清掉，
+          沒備份就救不回來。
+        </p>
+        <p className="muted small" style={{ marginBottom: 12 }}>
+          {getLastBackupAt() ? `上次備份：${new Date(getLastBackupAt()).toLocaleString()}` : '這台裝置還沒有匯出過備份'}
         </p>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
           <button type="button" className="btn-secondary small" onClick={handleExportBackup} disabled={backupBusy}>
