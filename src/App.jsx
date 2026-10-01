@@ -3036,11 +3036,15 @@ function ExpensesView({ data, onSave, onDelete }) {
   const [categoryFilter, setCategoryFilter] = useState(null); // 點「各分類累積花費」的卡片，篩選下面的支出明細
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
-  const sorted = [...data.expenses].sort((a, b) => (a.date < b.date ? 1 : -1));
-  const filtered = categoryFilter ? sorted.filter((e) => e.category === categoryFilter) : sorted;
   const total = data.expenses.reduce((s, e) => s + Number(e.amount), 0);
 
   const range = getRangeDates(period, customStart, customEnd);
+  // 下面的「支出明細」要跟上面選的期間（今日／本週／本月…／自訂）連動，不然「各分類花費」
+  // 卡片已經是本期的數字了，下面明細卻還是列全部歷史，點進去會對不起來、看起來像沒生效。
+  const sorted = data.expenses
+    .filter((e) => e.date >= range.start && e.date <= range.end)
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  const filtered = categoryFilter ? sorted.filter((e) => e.category === categoryFilter) : sorted;
 
   const periodCompare = useMemo(() => {
     const useManual = period === 'custom' && compareStart && compareEnd;
@@ -3162,11 +3166,11 @@ function ExpensesView({ data, onSave, onDelete }) {
       </div>
 
       <div className="view-head" style={{ marginTop: 24, marginBottom: 0 }}>
-        <h4 className="panel-title">支出明細{categoryFilter ? `　－　${categoryFilter}` : ''}</h4>
+        <h4 className="panel-title">{periodCompare.currLabel}支出明細{categoryFilter ? `　－　${categoryFilter}` : ''}</h4>
         {categoryFilter && <button type="button" className="text-link" onClick={() => setCategoryFilter(null)}>清除篩選，顯示全部</button>}
       </div>
       {filtered.length === 0 ? (
-        <EmptyHint text={categoryFilter ? `「${categoryFilter}」還沒有支出紀錄` : '還沒有成本紀錄'} />
+        <EmptyHint text={categoryFilter ? `「${categoryFilter}」在${periodCompare.currLabel}還沒有支出紀錄` : `${periodCompare.currLabel}還沒有成本紀錄`} />
       ) : (
         <div className="table-wrap">
           <table className="data-table">
