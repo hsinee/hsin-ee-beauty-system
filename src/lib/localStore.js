@@ -175,6 +175,15 @@ export async function saveRecord(record) {
   });
 }
 
+// 批次新增（Excel 匯入舊客人的歷史消費紀錄用），跟 saveCustomersBulk 一樣整批一次寫入，
+// 不要一筆一筆各自呼叫 saveRecord，不然匯入幾百筆的話要重複讀寫 localStorage 幾百次。
+export async function saveRecordsBulk(records) {
+  return withData((d) => {
+    d.records = [...d.records, ...records];
+    return records;
+  });
+}
+
 export async function deleteRecord(id) {
   withData((d) => { d.records = d.records.filter((r) => r.id !== id); });
 }

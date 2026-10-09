@@ -18,6 +18,7 @@ import {
   deleteService as apiDeleteService,
   saveServicesOrder as apiSaveServicesOrder,
   saveRecord as apiSaveRecord,
+  saveRecordsBulk as apiSaveRecordsBulk,
   deleteRecord as apiDeleteRecord,
   saveExpense as apiSaveExpense,
   deleteExpense as apiDeleteExpense,
@@ -241,6 +242,12 @@ function nextMemberNo(customers) {
    ============================================================ */
 
 const CUSTOMER_IMPORT_BASE_COLUMNS = ['姓名', '手機', 'LINE', 'Email', '生日', '得知來源', '備註', '儲值餘額'];
+// 歷史消費紀錄用「客人手機」對回「客戶名單」那張表（同一支手機號碼＝同一個人），
+// 這樣店家把舊客人的過去消費紀錄一起填進這張表，匯入時就能自動掛回正確的客人底下，
+// 不用先把客人匯進系統、再一筆一筆回來手動補消費紀錄。這張表整個是選填的，不填的話
+// 就只匯入客戶資料，跟原本的行為一樣。
+const HISTORY_IMPORT_COLUMNS = ['客人手機', '消費日期', '服務項目', '金額', '付款方式', '備註'];
+const HISTORY_IMPORT_SHEET_NAME = '歷史消費紀錄';
 
 function customerImportColumns(store) {
   return [...CUSTOMER_IMPORT_BASE_COLUMNS, ...(store.customerFields || []).map((f) => f.label)];
@@ -248,15 +255,24 @@ function customerImportColumns(store) {
 
 function downloadCustomerImportTemplate(store) {
   const cols = customerImportColumns(store);
-  const ws = XLSX.utils.aoa_to_sheet([cols]);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '客戶名單');
+  const custWs = XLSX.utils.aoa_to_sheet([cols]);
+  XLSX.utils.book_append_sheet(wb, custWs, '客戶名單');
+  const historyWs = XLSX.utils.aoa_to_sheet([HISTORY_IMPORT_COLUMNS]);
+  XLSX.utils.book_append_sheet(wb, historyWs, HISTORY_IMPORT_SHEET_NAME);
   XLSX.writeFile(wb, '客戶資料匯入範本.xlsx');
 }
 
+// 手機號碼拿掉所有非數字字元再比對（0912-345-678 跟 0912 345 678 跟 0912345678
+// 要當成同一支），避免兩張表格式打得不完全一樣就對不起來。
+function normalizePhoneForMatch(value) {
+  return String(value || '').replace(/[^0-9]/g, '');
+}
+
 // Excel 日期儲存格讀進來可能是 JS Date 物件，其他情況（純文字欄位）就是字串，
-// 兩種都正規化成 YYYY-MM-DD，格式不對就乾脆留空，不硬擋匯入（生日不是必填欄位）。
-function normalizeImportedBirthday(value) {
+// 兩種都正規化成 YYYY-MM-DD，格式不對就回傳空字串，由呼叫端決定要不要當成錯誤
+// （生日欄位是選填，空字串就直接略過；消費日期是必填，呼叫端會把空字串當錯誤處理）。
+function normalizeImportedDate(value) {
   if (!value) return '';
   if (value instanceof Date && !isNaN(value)) return toLocalISO(value);
   const s = String(value).trim().replace(/\//g, '-');
@@ -292,7 +308,7 @@ function parseCustomerImportRows(rows, store, existingCustomers) {
       phone,
       lineId: String(row['LINE'] || '').trim(),
       email: String(row['Email'] || '').trim(),
-      birthday: normalizeImportedBirthday(row['生日']),
+      birthday: normalizeImportedDate(row['生日']),
       source: String(row['得知來源'] || '').trim() || '其他',
       notes: String(row['備註'] || '').trim(),
       storedValueBalance: Number(row['儲值餘額']) || 0,
@@ -305,10 +321,74 @@ function parseCustomerImportRows(rows, store, existingCustomers) {
   return { valid, errors };
 }
 
+// 歷史消費紀錄：每一列是一筆過去的消費，用「客人手機」比對回客戶名單（含這次一起匯入的
+// 新客人，也含系統裡本來就有的舊客人），找不到對應客人的那幾列會列成錯誤、不會匯入。
+// 服務項目是自由文字、不用對到系統目前的服務項目，因為舊資料常常已經停賣或改過名字；
+// 預設當成已完成、已收全款，店家如果有特殊情況可以匯入後再自己到那筆紀錄編輯調整。
+function parseHistoryImportRows(rows, phoneToCustomer, priceTiers) {
+  const valid = [];
+  const errors = [];
+
+  rows.forEach((row, idx) => {
+    const rowNo = idx + 2;
+    const phoneRaw = String(row['客人手機'] || '').trim();
+    if (!phoneRaw && Object.values(row).every((v) => !String(v || '').trim())) return; // 整列空白，跳過不算錯誤
+    if (!phoneRaw) {
+      errors.push({ row: rowNo, reason: '客人手機空白' });
+      return;
+    }
+    const customer = phoneToCustomer.get(normalizePhoneForMatch(phoneRaw));
+    if (!customer) {
+      errors.push({ row: rowNo, reason: `找不到手機「${phoneRaw}」對應的客人，請確認客戶名單裡有這支手機` });
+      return;
+    }
+    const date = normalizeImportedDate(row['消費日期']);
+    if (!date) {
+      errors.push({ row: rowNo, reason: '消費日期空白或格式不正確（請用 YYYY-MM-DD）' });
+      return;
+    }
+    const amountRaw = String(row['金額'] ?? '').trim();
+    const amount = Number(amountRaw);
+    if (!amountRaw || isNaN(amount) || amount < 0) {
+      errors.push({ row: rowNo, reason: '金額空白或不是有效數字' });
+      return;
+    }
+    valid.push({
+      id: uid(),
+      customerId: customer.id,
+      date,
+      time: '',
+      serviceId: '',
+      serviceName: String(row['服務項目'] || '').trim() || '歷史消費紀錄',
+      listPrice: amount,
+      priceTier: priceTiers[0].id,
+      discount: 0,
+      amount,
+      extraServices: [],
+      addons: [],
+      products: [],
+      productDiscount: 0,
+      depositPaid: false,
+      depositAmount: 0,
+      paymentMethod: String(row['付款方式'] || '').trim() || '現金',
+      status: 'confirmed',
+      paymentStatus: 'paid_full',
+      staffId: '',
+      source: '',
+      notes: String(row['備註'] || '').trim(),
+      reminderSent: false,
+      completionSignature: '',
+      history: [],
+    });
+  });
+
+  return { valid, errors };
+}
+
 function CustomerImportModal({ store, data, onClose, onImport }) {
   const fileInputRef = useRef(null);
   const [fileName, setFileName] = useState('');
-  const [parsed, setParsed] = useState(null); // { valid, errors }
+  const [parsed, setParsed] = useState(null); // { customers: {valid, errors}, history: {valid, errors} }
   const [parseError, setParseError] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
@@ -323,19 +403,32 @@ function CustomerImportModal({ store, data, onClose, onImport }) {
     try {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: 'array', cellDates: true });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-      setParsed(parseCustomerImportRows(rows, store, data.customers));
+      const custWs = wb.Sheets[wb.SheetNames[0]];
+      const custRows = XLSX.utils.sheet_to_json(custWs, { defval: '' });
+      const customers = parseCustomerImportRows(custRows, store, data.customers);
+
+      // 「歷史消費紀錄」整張表是選填的，檔案裡沒有這張表就只匯入客戶資料，跟原本行為一樣。
+      let history = { valid: [], errors: [] };
+      const historyWs = wb.Sheets[HISTORY_IMPORT_SHEET_NAME];
+      if (historyWs) {
+        const phoneToCustomer = new Map();
+        data.customers.forEach((c) => phoneToCustomer.set(normalizePhoneForMatch(c.phone), c));
+        customers.valid.forEach((c) => phoneToCustomer.set(normalizePhoneForMatch(c.phone), c));
+        const historyRows = XLSX.utils.sheet_to_json(historyWs, { defval: '' });
+        history = parseHistoryImportRows(historyRows, phoneToCustomer, store.priceTiers);
+      }
+
+      setParsed({ customers, history });
     } catch (err) {
       setParseError('這個檔案讀不出來，請確認是不是 .xlsx 或 .csv 檔');
     }
   };
 
   const confirmImport = async () => {
-    if (!parsed || parsed.valid.length === 0) return;
+    if (!parsed || (parsed.customers.valid.length === 0 && parsed.history.valid.length === 0)) return;
     setBusy(true);
     try {
-      await onImport(parsed.valid);
+      await onImport({ customers: parsed.customers.valid, records: parsed.history.valid });
       setDone(true);
     } finally {
       setBusy(false);
@@ -345,8 +438,12 @@ function CustomerImportModal({ store, data, onClose, onImport }) {
   return (
     <Modal title="匯入客戶資料" onClose={onClose}>
       <p className="muted small" style={{ marginBottom: 12 }}>
-        適合原本已經有一批客戶名單、想一次搬進系統的情況。步驟：先下載範本，把既有的客戶資料貼進對應欄位，
+        適合原本已經有一批客戶名單、想一次搬進系統的情況。步驟：先下載範本，把既有的客戶資料貼進「客戶名單」那張表，
         存好後在這裡選檔案上傳。姓名和手機是必填，其他欄位可以留空。
+      </p>
+      <p className="muted small" style={{ marginBottom: 12 }}>
+        如果客人之前就有消費紀錄，也可以一起填進範本裡的「{HISTORY_IMPORT_SHEET_NAME}」那張表——用客人的手機對回客戶名單，
+        同一支手機可以填好幾列（一列一筆消費）。這張表整個是選填的，不填就只匯入客戶資料。
       </p>
       <button type="button" className="btn-secondary small" onClick={() => downloadCustomerImportTemplate(store)} style={{ marginBottom: 14 }}>
         下載匯入範本 (.xlsx)
@@ -354,7 +451,9 @@ function CustomerImportModal({ store, data, onClose, onImport }) {
 
       {done ? (
         <p style={{ color: '#4c7a3f', fontSize: 13 }}>
-          已成功匯入 {parsed.valid.length} 位客戶，關閉視窗就能在客戶列表看到。
+          已成功匯入 {parsed.customers.valid.length} 位客戶
+          {parsed.history.valid.length > 0 ? `、${parsed.history.valid.length} 筆消費紀錄` : ''}，
+          關閉視窗就能在客戶列表看到。
         </p>
       ) : (
         <>
@@ -368,20 +467,44 @@ function CustomerImportModal({ store, data, onClose, onImport }) {
           {parsed && (
             <div style={{ marginTop: 14 }}>
               <p className="muted small">
-                共讀到 {parsed.valid.length + parsed.errors.length} 筆，可匯入 {parsed.valid.length} 筆
-                {parsed.errors.length > 0 ? `，有 ${parsed.errors.length} 筆資料不完整、不會匯入：` : '。'}
+                客戶名單：共讀到 {parsed.customers.valid.length + parsed.customers.errors.length} 筆，可匯入 {parsed.customers.valid.length} 筆
+                {parsed.customers.errors.length > 0 ? `，有 ${parsed.customers.errors.length} 筆資料不完整、不會匯入：` : '。'}
               </p>
-              {parsed.errors.length > 0 && (
+              {parsed.customers.errors.length > 0 && (
                 <ul className="muted small" style={{ margin: '6px 0 0 18px', maxHeight: 140, overflowY: 'auto' }}>
-                  {parsed.errors.slice(0, 20).map((e, i) => (
+                  {parsed.customers.errors.slice(0, 20).map((e, i) => (
                     <li key={i}>第 {e.row} 列：{e.reason}</li>
                   ))}
-                  {parsed.errors.length > 20 && <li>...還有 {parsed.errors.length - 20} 筆</li>}
+                  {parsed.customers.errors.length > 20 && <li>...還有 {parsed.customers.errors.length - 20} 筆</li>}
                 </ul>
               )}
+
+              {(parsed.history.valid.length > 0 || parsed.history.errors.length > 0) && (
+                <>
+                  <p className="muted small" style={{ marginTop: 10 }}>
+                    歷史消費紀錄：共讀到 {parsed.history.valid.length + parsed.history.errors.length} 筆，可匯入 {parsed.history.valid.length} 筆
+                    {parsed.history.errors.length > 0 ? `，有 ${parsed.history.errors.length} 筆不會匯入：` : '。'}
+                  </p>
+                  {parsed.history.errors.length > 0 && (
+                    <ul className="muted small" style={{ margin: '6px 0 0 18px', maxHeight: 140, overflowY: 'auto' }}>
+                      {parsed.history.errors.slice(0, 20).map((e, i) => (
+                        <li key={i}>第 {e.row} 列：{e.reason}</li>
+                      ))}
+                      {parsed.history.errors.length > 20 && <li>...還有 {parsed.history.errors.length - 20} 筆</li>}
+                    </ul>
+                  )}
+                </>
+              )}
+
               <div className="modal-actions" style={{ marginTop: 14 }}>
-                <button className="btn-primary full" onClick={confirmImport} disabled={busy || parsed.valid.length === 0}>
-                  {busy ? '匯入中⋯' : `確認匯入 ${parsed.valid.length} 位客戶`}
+                <button
+                  className="btn-primary full"
+                  onClick={confirmImport}
+                  disabled={busy || (parsed.customers.valid.length === 0 && parsed.history.valid.length === 0)}
+                >
+                  {busy
+                    ? '匯入中⋯'
+                    : `確認匯入 ${parsed.customers.valid.length} 位客戶${parsed.history.valid.length > 0 ? `、${parsed.history.valid.length} 筆消費紀錄` : ''}`}
                 </button>
               </div>
             </div>
@@ -3778,9 +3901,15 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
     }
   };
 
-  const handleImportCustomers = async (customers) => {
-    await apiSaveCustomersBulk(customers, store.id);
-    updateData((d) => { d.customers = [...d.customers, ...customers]; });
+  const handleImportCustomers = async ({ customers, records }) => {
+    if (customers.length > 0) {
+      await apiSaveCustomersBulk(customers, store.id);
+      updateData((d) => { d.customers = [...d.customers, ...customers]; });
+    }
+    if (records.length > 0) {
+      await apiSaveRecordsBulk(records, store.id);
+      updateData((d) => { d.records = [...d.records, ...records]; });
+    }
   };
 
   const handleDeleteCustomer = async (id) => {
