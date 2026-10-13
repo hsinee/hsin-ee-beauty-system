@@ -732,7 +732,13 @@ function productsTotal(record) {
 function extraServicesTotal(record) {
   return (record.extraServices || []).reduce((s, es) => s + Number(es.amount || 0), 0);
 }
+// 預約狀態是「已取消」的話，這筆紀錄不算進營收（包含儲值扣款、服務老師業績等所有
+// 用 recordTotal 算出來的地方都會一起變成 0）——客人沒有真的來、沒有真的收到錢，
+// 不應該算進營收。原始的金額欄位還是照樣存著不動，只是「算總額」的時候當作 0，
+// 這樣如果之後把狀態改回來，金額也不用重新輸入；Excel 匯出等逐筆明細也還是看得到
+// 原始金額，只有「總額」這種彙總數字才會變成 0。
 function recordTotal(record) {
+  if (record.status === 'cancelled') return 0;
   return Number(record.amount || 0) + extraServicesTotal(record) + addonsTotal(record) + productsTotal(record);
 }
 // 這筆紀錄目前實際從客人儲值餘額扣了多少錢（沒有用儲值扣款就是 0）。
@@ -907,6 +913,7 @@ function Dashboard({ data, store }) {
     let addonRevenue = 0;
     let productRevenue = 0;
     inRange.forEach((r) => {
+      if (r.status === 'cancelled') return; // 已取消不算營收，跟 recordTotal 的邏輯一致，不然這張表加起來會跟上面的「期間營收」對不起來
       serviceMap[r.serviceName] = (serviceMap[r.serviceName] || 0) + Number(r.amount || 0);
       (r.extraServices || []).forEach((es) => {
         serviceMap[es.serviceName] = (serviceMap[es.serviceName] || 0) + Number(es.amount || 0);
