@@ -1895,18 +1895,21 @@ const CALENDAR_PERIODS = [
 
 function AppointmentCardItem({ a, store, onToggleReminded, onDelete, onEdit, onOpenCustomer }) {
   const upcoming = a.date >= todayISO();
+  // 已取消的紀錄在日曆上用刪除線＋淡化整張卡片，一眼就能跟真的有約的客人分開，
+  // 不然光看名字會以為這個月還是有約這位客人，容易誤會。
+  const isCancelled = a.source === 'record' && a.status === 'cancelled';
   return (
-    <li className={'appointment-card' + (a.source === 'record' && !upcoming ? ' is-record' : '')}>
+    <li className={'appointment-card' + (a.source === 'record' && !upcoming ? ' is-record' : '') + (isCancelled ? ' cancelled' : '')}>
       <div className="appointment-time">
         {a.time ? (<><Clock size={13} /> {a.time}</>) : (upcoming ? '未定時間' : '已完成服務')}
       </div>
       <div className="appointment-main">
-        <button className="text-link strong" onClick={() => onOpenCustomer(a.customerId)}>{a.customer.name}</button>
+        <button className={'text-link strong' + (isCancelled ? ' strikethrough' : '')} onClick={() => onOpenCustomer(a.customerId)}>{a.customer.name}</button>
         <span className="muted small"> {a.customer.phone}{a.customer.lineId ? ` ・ LINE ${a.customer.lineId}` : ''}</span>
         {a.source === 'record' && a.status && a.status !== 'confirmed' && (
           <span className={'tier-tag status-' + a.status}>{recordStatusLabel(a.status)}</span>
         )}
-        {a.serviceName && <div className="muted small">{a.serviceName}{a.source === 'record' ? ` ・ ${fmtMoney(recordTotal(a))}` : ''}</div>}
+        {a.serviceName && <div className={'muted small' + (isCancelled ? ' strikethrough' : '')}>{a.serviceName}{a.source === 'record' ? ` ・ ${fmtMoney(recordTotal(a))}` : ''}</div>}
         {a.source === 'record' && a.addons && a.addons.length > 0 && (
           <div className="muted small">加購：{a.addons.map((x) => x.type).join('、')}</div>
         )}
@@ -2065,7 +2068,10 @@ function CalendarView({ data, store, onAddRecord, onEditRecord, onDeleteRecord, 
                     {list.length > 0 && (
                       <div className="month-cell-preview">
                         {list.slice(0, 2).map((a) => (
-                          <span key={a.source + '-' + a.id} className="month-cell-chip">
+                          <span
+                            key={a.source + '-' + a.id}
+                            className={'month-cell-chip' + (a.source === 'record' && a.status === 'cancelled' ? ' cancelled' : '')}
+                          >
                             {a.time ? a.time + ' ' : ''}{a.customer.name}
                           </span>
                         ))}
@@ -3682,6 +3688,9 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       .appointment-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
       .appointment-card { display: flex; align-items: center; gap: 18px; background: var(--white); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; flex-wrap: wrap; }
       .appointment-card.is-record { background: var(--cream); }
+      /* 已取消的服務／預約：整張卡片淡化、客人姓名跟服務項目加上刪除線，跟真的有約的客人分清楚 */
+      .appointment-card.cancelled { opacity: 0.6; }
+      .strikethrough, .text-link.strikethrough { text-decoration: line-through; }
       .appointment-time { display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: var(--rose-deep); min-width: 84px; }
       .appointment-main { flex: 1; min-width: 160px; }
       .appointment-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -3701,6 +3710,7 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       .month-cell.selected { background: var(--beige); border-color: var(--rose-deep); }
       .month-cell-preview { display: flex; flex-direction: column; gap: 2px; width: 100%; }
       .month-cell-chip { font-size: 10px; color: var(--rose-deep); background: var(--white); border-radius: 3px; padding: 1px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; text-align: left; }
+      .month-cell-chip.cancelled { color: var(--taupe); text-decoration: line-through; opacity: 0.7; }
       .month-cell-more { font-size: 10px; color: var(--taupe); padding-left: 4px; }
     
       /* ---- Search / Table ---- */
