@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, Cell
 } from 'recharts';
 import {
-  Search, Plus, X, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, Trash2, Pencil, Bell,
+  Search, Plus, X, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, ArrowUpDown, Trash2, Pencil, Bell,
   Users, LayoutGrid, Sparkles, Wallet, ClipboardList, Menu, CalendarDays, Clock, Download, Settings as SettingsIcon,
   Award, History
 } from 'lucide-react';
@@ -1380,7 +1380,8 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
     notes: customer.notes || '',
     storedValueBalance: String(customer.storedValueBalance || 0),
     customFields: { ...(customer.customFields || {}) },
-  } : { name: '', phone: '', lineId: '', email: '', birthday: '', source: data.sources[0], otherSource: '', notes: '', storedValueBalance: '0', customFields: {} });
+    skipRevisitReminder: !!customer.skipRevisitReminder,
+  } : { name: '', phone: '', lineId: '', email: '', birthday: '', source: data.sources[0], otherSource: '', notes: '', storedValueBalance: '0', customFields: {}, skipRevisitReminder: false });
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const setCustomField = (id) => (e) => setForm({ ...form, customFields: { ...form.customFields, [id]: e.target.value } });
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -1430,6 +1431,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
         storedValueBalance: Number(form.storedValueBalance) || 0,
         customFields: form.customFields,
         signedContracts,
+        skipRevisitReminder: form.skipRevisitReminder,
       });
     } else {
       const memberNo = nextMemberNo(data.customers);
@@ -1448,6 +1450,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
         signedContracts,
         firstVisitDate: todayISO(),
         reminderSentFor: '',
+        skipRevisitReminder: form.skipRevisitReminder,
       });
     }
   };
@@ -1480,6 +1483,15 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
       ))}
 
       <Field label="備註（選填）"><textarea rows={3} value={form.notes} onChange={set('notes')} placeholder="內部備註" /></Field>
+
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={form.skipRevisitReminder}
+          onChange={(e) => setForm({ ...form, skipRevisitReminder: e.target.checked })}
+        />
+        這位客人不需要回訪提醒（例如一次性體驗、外地客人），不會出現在「回訪提醒」清單裡
+      </label>
 
       {contracts.length > 0 && (
         <>
@@ -1809,6 +1821,7 @@ function RecordHistoryModal({ record, onClose }) {
 function computeRevisitList(data) {
   const list = [];
   data.customers.forEach((c) => {
+    if (c.skipRevisitReminder) return; // 店家標記過「不需要回訪提醒」的客人，永遠不出現在這份清單
     const own = data.records.filter((r) => r.customerId === c.id).sort((a, b) => (a.date < b.date ? -1 : 1));
     if (own.length === 0) return;
     const lastDate = own[own.length - 1].date;
@@ -1822,16 +1835,29 @@ function computeRevisitList(data) {
   return list;
 }
 
-function RevisitView({ data, store, onOpenCustomer, onMarkReminded }) {
-  const list = useMemo(() => computeRevisitList(data), [data]);
+function RevisitView({ data, store, onOpenCustomer, onMarkReminded, onToggleSkip }) {
+  const baseList = useMemo(() => computeRevisitList(data), [data]);
+  // 預設最久沒回訪的排最前面（跟原本一樣），店家可以自己按鈕切換成最近期限的排前面，
+  // 不用每次都從最長的那票人開始往下滑才找得到比較新的。
+  const [sortDir, setSortDir] = useState('desc');
+  const list = sortDir === 'desc' ? baseList : [...baseList].reverse();
 
   return (
     <div>
       <div className="view-head">
         <div>
           <h2 className="serif">回訪提醒</h2>
-          <p className="muted">最近一次服務滿 {REVISIT_ALERT_START_DAY} 天（3 週）起就會顯示在這裡，沒有回訪就會一直留著，直到客人回訪或手動標記已提醒</p>
+          <p className="muted">最近一次服務滿 {REVISIT_ALERT_START_DAY} 天（3 週）起就會顯示在這裡，沒有回訪就會一直留著，直到客人回訪、手動標記已提醒、或標記這位客人不需要回訪提醒</p>
         </div>
+        {list.length > 1 && (
+          <button
+            type="button"
+            className="btn-secondary small"
+            onClick={() => setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))}
+          >
+            <ArrowUpDown size={14} /> {sortDir === 'desc' ? '最久沒回訪優先' : '最近期限優先'}
+          </button>
+        )}
       </div>
 
       {list.length === 0 ? (
@@ -1874,6 +1900,7 @@ function RevisitView({ data, store, onOpenCustomer, onMarkReminded }) {
                   onClick={() => onMarkReminded(item.customer.id, item.lastDate, !item.alreadyReminded)}
                 >{item.alreadyReminded ? '取消標記' : '標記已提醒'}</button>
                 <button className="text-link" onClick={() => onOpenCustomer(item.customer.id)}>查看客戶</button>
+                <button className="text-link" onClick={() => onToggleSkip(item.customer.id, true)}>這位客人不用再提醒</button>
               </div>
             </li>
           ))}
@@ -4116,6 +4143,21 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
     }
   };
 
+  // 從「回訪提醒」清單上直接標記某位客人不需要回訪提醒，就地把人從清單上移除，
+  // 不用特地跳去客戶編輯頁操作；之後要恢復的話，回客戶編輯頁把開關關掉就好。
+  const handleToggleSkipRevisit = async (customerId, skip) => {
+    const customer = data.customers.find((c) => c.id === customerId);
+    if (!customer) return;
+    try {
+      const saved = await apiSaveCustomer({ ...customer, skipRevisitReminder: skip }, store.id);
+      updateData((d) => {
+        d.customers = d.customers.map((c) => c.id === customerId ? saved : c);
+      });
+    } catch (e) {
+      reportError(e);
+    }
+  };
+
   // 舊版預約資料（appointments）在新架構下一律是空陣列，這兩個 handler 不會有東西可操作，
   // 純粹是保留給共用元件的 props 介面，避免元件內部判斷 source === 'appointment' 的分支報錯。
   const handleDeleteAppointment = () => {};
@@ -4216,7 +4258,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
           )}
 
           {view === 'revisit' && (
-            <RevisitView data={data} store={store} onOpenCustomer={openCustomer} onMarkReminded={handleMarkReminded} />
+            <RevisitView data={data} store={store} onOpenCustomer={openCustomer} onMarkReminded={handleMarkReminded} onToggleSkip={handleToggleSkipRevisit} />
           )}
 
           {view === 'services' && <ServicesView data={data} store={store} onSave={handleSaveService} onDelete={handleDeleteService} onReorder={handleReorderServices} />}
