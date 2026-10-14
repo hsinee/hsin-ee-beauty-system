@@ -1899,8 +1899,8 @@ function RevisitView({ data, store, onOpenCustomer, onMarkReminded, onToggleSkip
                   className={'btn-secondary small' + (item.alreadyReminded ? ' active' : '')}
                   onClick={() => onMarkReminded(item.customer.id, item.lastDate, !item.alreadyReminded)}
                 >{item.alreadyReminded ? '取消標記' : '標記已提醒'}</button>
-                <button className="text-link" onClick={() => onOpenCustomer(item.customer.id)}>查看客戶</button>
                 <button className="btn-secondary small" onClick={() => onToggleSkip(item.customer.id, true)}>不再提醒</button>
+                <button className="text-link" onClick={() => onOpenCustomer(item.customer.id)}>查看客戶</button>
               </div>
             </li>
           ))}
