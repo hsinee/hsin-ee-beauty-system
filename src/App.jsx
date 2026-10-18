@@ -526,6 +526,11 @@ function getRangeDates(period, customStart, customEnd) {
     const day = d.getDay() || 7;
     d.setDate(d.getDate() - day + 1);
     start = toLocalISO(d);
+    // 本週跟本月／本季／今年一樣，算整個星期一到星期日，不是只算到今天，
+    // 不然跟其他期間的加總會對不起來（例如週三看「本週」只會看到週一到週三的金額）
+    const weekEnd = new Date(d);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    return { start, end: toLocalISO(weekEnd) };
   } else if (period === 'month') {
     start = toLocalISO(new Date(now.getFullYear(), now.getMonth(), 1));
     // 本月是算整個月（月初到月底），不是只算到今天，這樣才能跟其他期間的加總對得起來
