@@ -50,6 +50,7 @@ const PAYMENT_STATUS_OPTIONS = [
   { id: 'paid_full', label: '已付全款' },
   { id: 'deposit_only', label: '已付訂金' },
   { id: 'stored_value', label: '使用儲值扣款' },
+  { id: 'session_package', label: '使用堂數折抵' },
   { id: 'unpaid', label: '未收款' },
 ];
 function paymentStatusLabel(id) {
@@ -752,6 +753,14 @@ function recordTotal(record) {
 function storedValueImpact(record) {
   return record && record.paymentStatus === 'stored_value' ? recordTotal(record) : 0;
 }
+// 這筆紀錄如果是用「堂數折抵」付款，算用掉了哪個服務項目的 1 堂（沒有用堂數折抵就回傳 null）。
+// 堂數包是「買 N 堂做 N 次」那種方案，店家自己在客戶資料設定每個項目剩餘堂數，
+// 消費時選這個付款狀態就自動扣 1 堂，不做更複雜的堂數計價邏輯。
+function sessionPackageUsage(record) {
+  return record && record.paymentStatus === 'session_package' && record.serviceId
+    ? { serviceId: record.serviceId, count: 1 }
+    : null;
+}
 
 function computeCoreStats(data, range) {
   const { records, expenses } = data;
@@ -1404,6 +1413,35 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
   const setContractAgreed = (id) => (e) => setContractState({ ...contractState, [id]: { ...contractState[id], agreed: e.target.checked } });
   const setContractSignature = (id) => (sig) => setContractState({ ...contractState, [id]: { ...contractState[id], signature: sig } });
 
+  // 店家有多個同意書時，先讓店家勾選這位客人實際需要簽哪些，下面才只展開那幾份
+  // 讓客人簽，不用每次建檔都把全部同意書的內容跟簽名格都攤出來。已經簽過的同意書
+  // 預設勾選，避免編輯客戶時看起來「消失」。
+  const [selectedContractIds, setSelectedContractIds] = useState(() => {
+    const init = new Set();
+    contracts.forEach((c) => {
+      if (customer && customer.signedContracts && customer.signedContracts[c.id]) init.add(c.id);
+    });
+    return init;
+  });
+  const toggleContractSelected = (id) => (e) => {
+    setSelectedContractIds((prev) => {
+      const next = new Set(prev);
+      if (e.target.checked) next.add(id); else next.delete(id);
+      return next;
+    });
+  };
+
+  // 堂數方案：買 N 堂做 N 次的項目，店家自己設定每個項目剩餘堂數，服務時選
+  // 「使用堂數折抵」會自動扣 1 堂。這裡只存「目前剩餘堂數」，不記錄總共買幾堂、
+  // 買了幾次，店家自己核對帳目後直接改這個數字就好，故意不做更複雜的交易記錄。
+  const [sessionRows, setSessionRows] = useState(() => {
+    const existing = (customer && customer.sessionBalances) || {};
+    return Object.entries(existing).map(([serviceId, remaining]) => ({ key: uid(), serviceId, remaining: String(remaining) }));
+  });
+  const addSessionRow = () => setSessionRows((prev) => [...prev, { key: uid(), serviceId: '', remaining: '' }]);
+  const removeSessionRow = (key) => setSessionRows((prev) => prev.filter((r) => r.key !== key));
+  const updateSessionRow = (key, field, value) => setSessionRows((prev) => prev.map((r) => (r.key === key ? { ...r, [field]: value } : r)));
+
   const submit = () => {
     if (!form.name.trim() || !form.phone.trim()) { setError('姓名和手機是必填欄位'); return; }
     const missing = customerFields.find((f) => f.required && !(form.customFields[f.id] || '').trim());
@@ -1412,6 +1450,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
     const resolvedSource = form.source === '其他' && form.otherSource.trim() ? form.otherSource.trim() : form.source;
     const signedContracts = {};
     contracts.forEach((c) => {
+      if (!selectedContractIds.has(c.id)) return;
       const st = contractState[c.id];
       if (st && st.agreed && st.signature) {
         const existing = customer && customer.signedContracts && customer.signedContracts[c.id];
@@ -1422,6 +1461,10 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
           agreedAt: (existing && existing.agreedAt) || todayISO(),
         };
       }
+    });
+    const sessionBalances = {};
+    sessionRows.forEach((r) => {
+      if (r.serviceId && r.remaining !== '') sessionBalances[r.serviceId] = Number(r.remaining) || 0;
     });
     if (customer) {
       onSave({
@@ -1437,6 +1480,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
         customFields: form.customFields,
         signedContracts,
         skipRevisitReminder: form.skipRevisitReminder,
+        sessionBalances,
       });
     } else {
       const memberNo = nextMemberNo(data.customers);
@@ -1456,6 +1500,7 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
         firstVisitDate: todayISO(),
         reminderSentFor: '',
         skipRevisitReminder: form.skipRevisitReminder,
+        sessionBalances,
       });
     }
   };
@@ -1470,6 +1515,33 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
       <Field label="儲值餘額（選填）" hint="客人預先儲值的金額，服務時可選「使用儲值扣款」自動扣除">
         <input type="number" value={form.storedValueBalance} onChange={set('storedValueBalance')} />
       </Field>
+
+      <div className="addon-section">
+        <div className="addon-header">
+          <span className="field-label">堂數方案（選填）</span>
+        </div>
+        <p className="muted small" style={{ marginTop: -4, marginBottom: 8 }}>
+          如果客人買的是「買 N 堂做 N 次」的方案（例如臉部保養買 10 堂、按摩買 5 堂），在這裡設定每個項目目前剩餘的堂數；之後幫這位客人新增服務紀錄時，付款狀態選「使用堂數折抵」會自動扣 1 堂
+        </p>
+        {sessionRows.map((r) => (
+          <div className="product-row" key={r.key} style={{ flexWrap: 'wrap' }}>
+            <select value={r.serviceId} onChange={(e) => updateSessionRow(r.key, 'serviceId', e.target.value)} style={{ flex: '1 1 160px', minWidth: 0 }}>
+              <option value="">請選擇服務項目</option>
+              {renderServiceOptions(data.services)}
+            </select>
+            <input
+              type="number"
+              value={r.remaining}
+              onChange={(e) => updateSessionRow(r.key, 'remaining', e.target.value)}
+              placeholder="剩餘堂數"
+              style={{ width: 100, minWidth: 0 }}
+            />
+            <button type="button" className="icon-btn ghost" onClick={() => removeSessionRow(r.key)} title="移除"><Trash2 size={14} /></button>
+          </div>
+        ))}
+        <button type="button" className="btn-secondary small" onClick={addSessionRow} style={{ marginTop: 8 }}>+ 新增堂數項目</button>
+      </div>
+
       <Field label="得知來源（選填）">
         <select value={form.source} onChange={set('source')}>
           {data.sources.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -1501,8 +1573,16 @@ function CustomerFormModal({ data, store, customer, onClose, onSave, onDelete })
       {contracts.length > 0 && (
         <>
           <h4 className="panel-title" style={{ marginTop: 20 }}>服務同意書（選填）</h4>
-          <p className="muted small" style={{ marginTop: -8, marginBottom: 12 }}>簽過一次就好，之後這位客人做需要此同意書的服務時不用再重簽</p>
-          {contracts.map((c) => (
+          <p className="muted small" style={{ marginTop: -8, marginBottom: 12 }}>先勾選這位客人需要簽哪些同意書，下面才會展開要簽的內容；簽過一次就好，之後這位客人做需要此同意書的服務時不用再重簽</p>
+          <div className="pill-group" style={{ marginBottom: 16 }}>
+            {contracts.map((c) => (
+              <label key={c.id} className="checkbox-row" style={{ marginBottom: 0 }}>
+                <input type="checkbox" checked={selectedContractIds.has(c.id)} onChange={toggleContractSelected(c.id)} />
+                {c.name}
+              </label>
+            ))}
+          </div>
+          {contracts.filter((c) => selectedContractIds.has(c.id)).map((c) => (
             <div key={c.id} className="addon-section">
               <div className="addon-header">
                 <span className="field-label">{c.name}</span>
@@ -1615,6 +1695,23 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
         )}
         <p className="notes-text">{customer.notes ? customer.notes : <span className="muted">還沒有備註，點「編輯客戶」新增</span>}</p>
       </div>
+
+      {Object.keys(customer.sessionBalances || {}).length > 0 && (
+        <>
+          <h4 className="panel-title" style={{ marginTop: 28 }}>堂數方案</h4>
+          <div className="notes-tags">
+            {Object.entries(customer.sessionBalances).map(([serviceId, remaining]) => {
+              const svc = data.services.find((s) => s.id === serviceId);
+              return (
+                <span key={serviceId} className="tag tag-custom">
+                  {svc ? svc.name : '（已刪除的項目）'}：剩餘 {remaining} 堂
+                </span>
+              );
+            })}
+          </div>
+          <p className="muted small" style={{ marginTop: 8 }}>點「編輯客戶」可以調整堂數</p>
+        </>
+      )}
 
       {Object.keys(customer.signedContracts || {}).length > 0 && (
         <>
@@ -2730,7 +2827,12 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
           label="付款狀態"
           hint={paymentStatus === 'stored_value' && chosenCustomer
             ? `目前餘額 ${fmtMoney(chosenCustomer.storedValueBalance)}，扣款後剩 ${fmtMoney(chosenCustomer.storedValueBalance - grandTotal)}`
-            : undefined}
+            : paymentStatus === 'session_package' && chosenCustomer && selectedService
+              ? (() => {
+                  const remaining = Number((chosenCustomer.sessionBalances || {})[selectedService.id]) || 0;
+                  return `「${selectedService.name}」目前剩餘 ${remaining} 堂，折抵後剩 ${remaining - 1} 堂`;
+                })()
+              : undefined}
         >
           <select value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
             {PAYMENT_STATUS_OPTIONS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
@@ -4005,6 +4107,34 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
     updateData((d) => { d.customers = d.customers.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)); });
   };
 
+  // 依「新舊差額」調整客人堂數方案的剩餘堂數，邏輯跟 applyStockDelta 一樣用 deltaMap
+  // 依服務項目分開算，一次新增多項服務、或編輯/刪除紀錄都不會互相蓋掉。只調整客戶
+  // 本來就有設定堂數的項目，沒設定過的項目即使選了「使用堂數折抵」也不會生出負數堂數。
+  const applySessionBalanceDelta = async (customerId, oldRecords, newRecords) => {
+    const deltaMap = {};
+    oldRecords.forEach((r) => {
+      const u = sessionPackageUsage(r);
+      if (u) deltaMap[u.serviceId] = (deltaMap[u.serviceId] || 0) + u.count;
+    });
+    newRecords.forEach((r) => {
+      const u = sessionPackageUsage(r);
+      if (u) deltaMap[u.serviceId] = (deltaMap[u.serviceId] || 0) - u.count;
+    });
+    if (Object.keys(deltaMap).length === 0) return;
+    const customer = data.customers.find((c) => c.id === customerId);
+    if (!customer) return;
+    const sessionBalances = { ...(customer.sessionBalances || {}) };
+    let changed = false;
+    Object.entries(deltaMap).forEach(([serviceId, delta]) => {
+      if (!delta || sessionBalances[serviceId] === undefined) return;
+      sessionBalances[serviceId] = Number(sessionBalances[serviceId]) + delta;
+      changed = true;
+    });
+    if (!changed) return;
+    const updatedCustomer = await apiSaveCustomer({ ...customer, sessionBalances }, store.id);
+    updateData((d) => { d.customers = d.customers.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)); });
+  };
+
   // 依「新舊數量差額」調整商品庫存，只調整店家有填庫存數字的商品（沒填就當作不追蹤庫存）。
   // 同樣接受陣列，一次新增多項服務時只會統一調整一次，不會互相蓋掉。
   const applyStockDelta = async (oldRecords, newRecords) => {
@@ -4038,6 +4168,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       const customerId = records[0]?.customerId;
       if (customerId) {
         await applyStoredValueDelta(customerId, [], savedList);
+        await applySessionBalanceDelta(customerId, [], savedList);
         await applyStockDelta([], savedList);
       }
       setAddRecordFor(null);
@@ -4052,6 +4183,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       const saved = await apiSaveRecord(record, store.id);
       updateData((d) => { d.records = d.records.map((r) => (r.id === saved.id ? saved : r)); });
       await applyStoredValueDelta(saved.customerId, oldRecord ? [oldRecord] : [], [saved]);
+      await applySessionBalanceDelta(saved.customerId, oldRecord ? [oldRecord] : [], [saved]);
       await applyStockDelta(oldRecord ? [oldRecord] : [], [saved]);
       setEditingRecord(null);
     } catch (e) {
@@ -4066,6 +4198,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       updateData((d) => { d.records = d.records.filter((r) => r.id !== id); });
       if (record) {
         await applyStoredValueDelta(record.customerId, [record], []);
+        await applySessionBalanceDelta(record.customerId, [record], []);
         await applyStockDelta([record], []);
       }
     } catch (e) {
