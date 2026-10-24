@@ -632,6 +632,25 @@ function Field({ label, children, hint }) {
   );
 }
 
+// 新增服務／預約表單裡比較少用、一次性加購類的區塊（加另一項服務／購買產品／加購項目）
+// 用這個包起來，預設收合、點標題展開，表單不會一打開就攤開十幾個欄位。編輯既有紀錄、
+// 這個區塊本來就有填資料的話，外面呼叫時會把 defaultOpen 設 true，不會讓已經填好的
+// 資料看起來「消失」。
+function CollapsibleSection({ title, summary, open, onToggle, children }) {
+  return (
+    <div className="addon-section">
+      <button type="button" className="addon-header collapsible-header" onClick={onToggle}>
+        <span className="field-label">{title}</span>
+        <span className="collapsible-right">
+          {summary && <span className="muted small">{summary}</span>}
+          {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </span>
+      </button>
+      {open && <div className="collapsible-body">{children}</div>}
+    </div>
+  );
+}
+
 function KpiCard({ label, value, sub }) {
   return (
     <div className="kpi-card">
@@ -1326,8 +1345,29 @@ function exportAllSystemData(data, store) {
   XLSX.writeFile(wb, `${safeName}_全部資料_${todayISO()}.xlsx`);
 }
 
+// 客戶列表的快速篩選：每個條件獨立開關，同時勾選的話是「同時符合」（AND），
+// 方便店家組合查看，例如「本月生日」+「有儲值餘額」的客人可以趁生日提醒順便消費。
+const CUSTOMER_QUICK_FILTERS = [
+  { id: 'storedValue', label: '有儲值餘額', test: (c) => Number(c.storedValueBalance) > 0 },
+  { id: 'sessionPackage', label: '有堂數方案剩餘', test: (c) => Object.values(c.sessionBalances || {}).some((v) => Number(v) > 0) },
+  { id: 'birthday', label: '本月生日', test: (c) => isBirthdayThisMonth(c.birthday) },
+  {
+    id: 'revisitDue',
+    label: `超過${REVISIT_ALERT_START_DAY}天沒回訪`,
+    test: (c, s) => !c.skipRevisitReminder && s.last && daysBetween(s.last.date, todayISO()) >= REVISIT_ALERT_START_DAY,
+  },
+];
+
 function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCustomer, onImportCustomers }) {
   const [q, setQ] = useState('');
+  const [activeFilters, setActiveFilters] = useState(() => new Set());
+  const toggleFilter = (id) => {
+    setActiveFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -1340,21 +1380,26 @@ function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCusto
         (c.lineId || '').toLowerCase().includes(term)
       );
     }
-    return list
-      .map((c) => ({ c, s: customerSummary(c, data.records) }))
-      .sort((a, b) => {
-        const da = a.s.last ? a.s.last.date : '';
-        const db = b.s.last ? b.s.last.date : '';
-        return da < db ? 1 : -1;
-      });
-  }, [q, data.customers, data.records]);
+    let mapped = list.map((c) => ({ c, s: customerSummary(c, data.records) }));
+    if (activeFilters.size > 0) {
+      const activeDefs = CUSTOMER_QUICK_FILTERS.filter((f) => activeFilters.has(f.id));
+      mapped = mapped.filter(({ c, s }) => activeDefs.every((f) => f.test(c, s)));
+    }
+    return mapped.sort((a, b) => {
+      const da = a.s.last ? a.s.last.date : '';
+      const db = b.s.last ? b.s.last.date : '';
+      return da < db ? 1 : -1;
+    });
+  }, [q, data.customers, data.records, activeFilters]);
 
   return (
     <div>
       <div className="view-head">
         <div>
           <h2 className="serif">客戶</h2>
-          <p className="muted">共 {data.customers.length} 位客人</p>
+          <p className="muted">
+            {activeFilters.size > 0 || q.trim() ? `符合條件 ${filtered.length} 位（共 ${data.customers.length} 位客人）` : `共 ${data.customers.length} 位客人`}
+          </p>
         </div>
         <div className="button-group">
           <button className="btn-secondary" onClick={() => exportAllSystemData(data, store)} disabled={data.customers.length === 0}>
@@ -1368,6 +1413,20 @@ function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCusto
       <div className="search-bar">
         <Search size={16} />
         <input placeholder="搜尋姓名 / 電話 / 會員編號 / LINE" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+
+      <div className="pill-group" style={{ marginBottom: 18 }}>
+        {CUSTOMER_QUICK_FILTERS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            className={'pill' + (activeFilters.has(f.id) ? ' active' : '')}
+            onClick={() => toggleFilter(f.id)}
+          >{f.label}</button>
+        ))}
+        {activeFilters.size > 0 && (
+          <button type="button" className="text-link" onClick={() => setActiveFilters(new Set())}>清除篩選</button>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -2051,6 +2110,7 @@ const CALENDAR_PERIODS = [
   { id: 'day', label: '本日' },
   { id: 'week', label: '本週' },
   { id: 'month', label: '本月' },
+  { id: 'agenda', label: '清單' },
 ];
 
 function AppointmentCardItem({ a, store, onToggleReminded, onDelete, onEdit, onOpenCustomer }) {
@@ -2126,6 +2186,11 @@ function CalendarView({ data, store, onAddRecord, onEditRecord, onDeleteRecord, 
         end: toLocalISO(new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 0)),
       };
     }
+    // 「清單」是不分月份、週別的待辦式檢視：從今天開始、未來所有已排的服務／預約
+    // 一次攤平列出來，不用切月份或週別一格一格點才找得到接下來的安排。
+    if (period === 'agenda') {
+      return { start: todayISO(), end: '9999-12-31' };
+    }
     return getCalendarRange(period);
   }, [period, monthCursor]);
 
@@ -2180,7 +2245,9 @@ function CalendarView({ data, store, onAddRecord, onEditRecord, onDeleteRecord, 
           <p className="muted">
             {period === 'month'
               ? monthLabel
-              : `${fmtDate(range.start)}${range.start !== range.end ? ` — ${fmtDate(range.end)}` : ''}`
+              : period === 'agenda'
+                ? '即將到來的服務／預約'
+                : `${fmtDate(range.start)}${range.start !== range.end ? ` — ${fmtDate(range.end)}` : ''}`
             } ・ 共 {totalCount} 筆（服務／預約紀錄）
           </p>
         </div>
@@ -2268,7 +2335,7 @@ function CalendarView({ data, store, onAddRecord, onEditRecord, onDeleteRecord, 
           )}
         </>
       ) : grouped.length === 0 ? (
-        <EmptyHint text="這段期間還沒有預約或服務紀錄" />
+        <EmptyHint text={period === 'agenda' ? '目前沒有排定在未來的服務／預約' : '這段期間還沒有預約或服務紀錄'} />
       ) : (
         <div className="calendar-groups">
           {grouped.map(([date, list]) => (
@@ -2509,6 +2576,11 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
     (record && record.products || []).forEach((p) => { map[p.id] = p.qty || 1; });
     return map;
   });
+  // 這三個比較少用的區塊預設收合，但編輯既有紀錄時如果本來就有填資料，要預設展開，
+  // 不然會讓人以為已經填好的加購／產品／其他服務不見了。
+  const [extraOpen, setExtraOpen] = useState(() => (record?.extraServices || []).length > 0);
+  const [productsOpen, setProductsOpen] = useState(() => (record?.products || []).length > 0);
+  const [addonsOpen, setAddonsOpen] = useState(() => (record?.addons || []).length > 0);
   const [hasProductDiscount, setHasProductDiscount] = useState(record ? !!record.productDiscount : false);
   const [productDiscountAmount, setProductDiscountAmount] = useState(record && record.productDiscount ? String(record.productDiscount) : '');
   const [depositAmount, setDepositAmount] = useState(record && record.depositAmount ? String(record.depositAmount) : '');
@@ -2900,10 +2972,12 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         </Field>
       )}
 
-      <div className="addon-section">
-        <div className="addon-header">
-          <span className="field-label">加另一項服務</span>
-        </div>
+      <CollapsibleSection
+        title="加另一項服務"
+        summary={validExtraServices.length > 0 ? `已加 ${validExtraServices.length} 項` : undefined}
+        open={extraOpen}
+        onToggle={() => setExtraOpen((v) => !v)}
+      >
         {extraServices.map((es) => (
           <div className="product-row" key={es.key} style={{ flexWrap: 'wrap' }}>
             <select value={es.serviceId} onChange={(e) => updateExtraService(es.key, 'serviceId', e.target.value)} style={{ flex: '1 1 140px', minWidth: 0 }}>
@@ -2932,13 +3006,15 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
           這裡加的服務會存在同一筆紀錄裡，共用這次的客人／日期／付款方式；加購、購買產品、簽名還是只算在最上面第一項服務裡
         </p>
         {hasIncompleteExtraService && <p style={{ color: '#b56f65', fontSize: 13 }}>加的服務項目要填價格才能送出</p>}
-      </div>
+      </CollapsibleSection>
 
       {storeProducts.length > 0 && (
-        <div className="addon-section">
-          <div className="addon-header">
-            <span className="field-label">購買產品（非加購）</span>
-          </div>
+        <CollapsibleSection
+          title="購買產品（非加購）"
+          summary={selectedProducts.length > 0 ? `已選 ${selectedProducts.length} 項` : undefined}
+          open={productsOpen}
+          onToggle={() => setProductsOpen((v) => !v)}
+        >
           <div className="addon-list">
             {storeProducts.map((p) => (
               <div className="product-row" key={p.id}>
@@ -2985,14 +3061,16 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
               <input type="number" value={productDiscountAmount} onChange={(e) => setProductDiscountAmount(e.target.value)} placeholder="0" />
             </Field>
           )}
-        </div>
+        </CollapsibleSection>
       )}
 
-      <div className="addon-section">
-        <div className="addon-header">
-          <span className="field-label">加購項目（敷膜／面膜等）</span>
-          <button type="button" className="btn-secondary small" onClick={addAddonLine}>+ 新增加購</button>
-        </div>
+      <CollapsibleSection
+        title="加購項目（敷膜／面膜等）"
+        summary={addons.length > 0 ? `已加 ${addons.length} 項` : undefined}
+        open={addonsOpen}
+        onToggle={() => setAddonsOpen((v) => !v)}
+      >
+        <button type="button" className="btn-secondary small" onClick={addAddonLine}>+ 新增加購</button>
         {addons.length > 0 && (
           <div className="addon-list">
             {addons.map((a) => (
@@ -3007,7 +3085,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
             ))}
           </div>
         )}
-      </div>
+      </CollapsibleSection>
 
       <div className="final-amount-row breakdown">
         <div className="final-amount-line"><span className="muted">服務金額</span><span>{fmtMoney(finalAmount)}</span></div>
@@ -3865,6 +3943,12 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
     
       .addon-section { display: flex; flex-direction: column; gap: 8px; }
       .addon-header { display: flex; justify-content: space-between; align-items: center; }
+      .collapsible-header {
+        background: none; border: none; padding: 0; width: 100%; cursor: pointer;
+        font-family: inherit; color: inherit;
+      }
+      .collapsible-right { display: flex; align-items: center; gap: 8px; color: var(--taupe); }
+      .collapsible-body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
       .addon-list { display: flex; flex-direction: column; gap: 8px; }
       .addon-row { display: grid; grid-template-columns: 100px 1fr 90px auto; gap: 6px; align-items: center; }
       .addon-row select, .addon-row input { font-family: inherit; font-size: 13px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--white); color: var(--brown); }
