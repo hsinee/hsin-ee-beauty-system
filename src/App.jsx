@@ -889,12 +889,32 @@ const PERIODS = [
   { id: 'custom', label: '自訂' },
 ];
 
-function Dashboard({ data, store }) {
+function Dashboard({ data, store, onGoto }) {
   const [period, setPeriod] = useState('month');
   const [customStart, setCustomStart] = useState(todayISO());
   const [customEnd, setCustomEnd] = useState(todayISO());
   const [compareStart, setCompareStart] = useState('');
   const [compareEnd, setCompareEnd] = useState('');
+
+  // 「待辦」卡片：一進總覽就看到今天有什麼要處理的，不用每個分頁都點進去確認。
+  // 只在真的有東西要處理時才顯示那張卡片，沒事的時候這排就不會出現，不會變成永遠擺著的裝飾。
+  const todayAppointmentCount = useMemo(
+    () => data.records.filter((r) => r.date === todayISO() && r.status !== 'cancelled').length,
+    [data.records]
+  );
+  const revisitDueCount = useMemo(
+    () => computeRevisitList(data).filter((item) => !item.alreadyReminded).length,
+    [data]
+  );
+  const birthdayCount = useMemo(
+    () => data.customers.filter((c) => isBirthdayThisMonth(c.birthday)).length,
+    [data.customers]
+  );
+  const todoCards = [
+    todayAppointmentCount > 0 && { key: 'today', label: '今天有服務／預約', count: todayAppointmentCount, unit: '筆', view: 'calendar' },
+    revisitDueCount > 0 && { key: 'revisit', label: '客人超過 3 週沒回訪', count: revisitDueCount, unit: '位', view: 'revisit' },
+    birthdayCount > 0 && { key: 'birthday', label: '本月生日的客人', count: birthdayCount, unit: '位', view: 'customers' },
+  ].filter(Boolean);
 
   const range = getRangeDates(period, customStart, customEnd);
 
@@ -1021,6 +1041,17 @@ function Dashboard({ data, store }) {
           </button>
         </div>
       </div>
+
+      {todoCards.length > 0 && (
+        <div className="todo-grid">
+          {todoCards.map((t) => (
+            <button type="button" key={t.key} className="todo-card" onClick={() => onGoto && onGoto(t.view)}>
+              <span className="todo-count">{t.count}</span>
+              <span className="todo-label">{t.unit}{t.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {period === 'custom' && (
         <div className="custom-range">
@@ -2960,7 +2991,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       <div className="addon-section">
         <div className="addon-header">
           <span className="field-label">加購項目（敷膜／面膜等）</span>
-          <button type="button" className="text-link" onClick={addAddonLine}>+ 新增加購</button>
+          <button type="button" className="btn-secondary small" onClick={addAddonLine}>+ 新增加購</button>
         </div>
         {addons.length > 0 && (
           <div className="addon-list">
@@ -3564,16 +3595,29 @@ function ExpenseFormModal({ expense, onClose, onSave }) {
    主程式
    ============================================================ */
 
-const NAV = [
-  { id: 'dashboard', label: '總覽', icon: LayoutGrid },
-  { id: 'customers', label: '客戶', icon: Users },
-  { id: 'calendar', label: '日曆', icon: CalendarDays },
-  { id: 'revisit', label: '回訪提醒', icon: Bell },
-  { id: 'services', label: '服務項目', icon: Sparkles },
-  { id: 'expenses', label: '成本', icon: Wallet },
-  { id: 'staff', label: '業績', icon: Award },
-  { id: 'settings', label: '品牌設定', icon: SettingsIcon },
+// 導覽分成「日常操作」（每天都會用到）跟「管理設定」（比較少動、設定類的頁面）
+// 兩組，中間加個小標題分隔，純粹是畫面分組方便找，不影響任何頁面邏輯或資料。
+const NAV_GROUPS = [
+  {
+    label: '日常操作',
+    items: [
+      { id: 'dashboard', label: '總覽', icon: LayoutGrid },
+      { id: 'customers', label: '客戶', icon: Users },
+      { id: 'calendar', label: '日曆', icon: CalendarDays },
+      { id: 'revisit', label: '回訪提醒', icon: Bell },
+    ],
+  },
+  {
+    label: '管理設定',
+    items: [
+      { id: 'services', label: '服務項目', icon: Sparkles },
+      { id: 'expenses', label: '成本', icon: Wallet },
+      { id: 'staff', label: '業績', icon: Award },
+      { id: 'settings', label: '品牌設定', icon: SettingsIcon },
+    ],
+  },
 ];
+const NAV = NAV_GROUPS.flatMap((g) => g.items);
 
 function BrowserModeWarning() {
   const [dismissed, setDismissed] = useState(() => {
@@ -3629,6 +3673,51 @@ function BackupReminder({ data, onGoBackup }) {
   );
 }
 
+// 不管現在在哪個頁面，都可以直接打客人姓名、電話或會員編號快速跳到客戶詳情頁，
+// 不用先點回「客戶」頁再搜尋。純畫面上的捷徑，沒有新增任何資料欄位。
+function GlobalCustomerSearch({ customers, onSelect, className }) {
+  const [query, setQuery] = useState('');
+  const matches = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (!term) return [];
+    return customers.filter((c) =>
+      c.name.toLowerCase().includes(term) ||
+      (c.phone || '').includes(term) ||
+      (c.memberNo || '').toLowerCase().includes(term)
+    ).slice(0, 6);
+  }, [query, customers]);
+
+  const pick = (id) => {
+    onSelect(id);
+    setQuery('');
+  };
+
+  return (
+    <div className={'global-search' + (className ? ' ' + className : '')}>
+      <div className="global-search-box">
+        <Search size={14} className="global-search-icon" />
+        <input
+          placeholder="搜尋客人姓名、電話"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
+      {matches.length > 0 && (
+        <ul className="autocomplete global-search-results">
+          {matches.map((c) => (
+            <li key={c.id} onMouseDown={(e) => { e.preventDefault(); pick(c.id); }}>
+              <span className="strong">{c.name}</span> <span className="muted small">{c.memberNo} ・ {c.phone}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {query.trim() && matches.length === 0 && (
+        <div className="global-search-empty muted small">找不到符合的客人</div>
+      )}
+    </div>
+  );
+}
+
 function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
   const rose = primaryColor || '#c58f82';
   const cream = backgroundColor || '#f1ebe5';
@@ -3676,6 +3765,16 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       .brand-logo { display: block; width: 140px; height: auto; }
       .brand-logo.mobile { width: 92px; }
       .brand-sub { font-size: 12px; color: var(--taupe); margin-top: 6px; }
+      .global-search { position: relative; margin-bottom: 18px; }
+      .global-search-box {
+        display: flex; align-items: center; gap: 6px;
+        border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px;
+        background: var(--white);
+      }
+      .global-search-icon { color: var(--taupe); flex-shrink: 0; }
+      .global-search-box input { border: none; outline: none; background: none; font-size: 13px; width: 100%; color: var(--brown); }
+      .global-search-results { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20; }
+      .global-search-empty { position: absolute; top: calc(100% + 6px); left: 0; padding: 0 2px; }
       .nav-list { list-style: none; padding: 0; margin: 0; }
       .nav-item {
         padding: 10px 4px;
@@ -3694,11 +3793,16 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
         content: ''; position: absolute; left: -20px; top: 0; bottom: 0; width: 3px; background: var(--rose-deep);
       }
       .nav-item:hover { color: var(--brown); }
-    
+      .nav-group-items { list-style: none; padding: 0; margin: 0; }
+      .nav-group.with-divider { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+      .nav-group-label { font-size: 11px; letter-spacing: 0.04em; color: var(--taupe); opacity: 0.75; padding: 0 4px 6px; }
+
       /* ---- Main ---- */
       .main-area { flex: 1; padding: 40px 44px 64px; max-width: 1100px; }
       .mobile-header { display: none; }
       .mobile-nav { display: none; }
+      .mobile-search { display: none; }
+      .global-search.no-margin { margin-bottom: 0; }
     
       .view-head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 24px; flex-wrap: wrap; gap: 14px; }
     
@@ -3744,6 +3848,15 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       .category-summary-card:hover { border-color: var(--rose); }
       .category-summary-card.active { border-color: var(--rose); box-shadow: 0 0 0 1px var(--rose); }
       .kpi-value.small { font-family: 'Noto Serif TC', serif; font-size: 17px; font-weight: 600; }
+      .todo-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+      .todo-card {
+        display: flex; align-items: center; gap: 10px;
+        background: var(--white); border: 1px solid var(--rose-deep); border-radius: 6px;
+        padding: 10px 16px; cursor: pointer; font-family: inherit; text-align: left;
+      }
+      .todo-card:hover { background: var(--cream); }
+      .todo-count { font-family: 'Noto Serif TC', serif; font-size: 20px; font-weight: 700; color: var(--rose-deep); }
+      .todo-label { font-size: 13px; color: var(--brown); }
     
       .final-amount-row { display: flex; justify-content: space-between; align-items: center; background: var(--beige); border-radius: 6px; padding: 10px 14px; font-size: 14px; }
       .final-amount-row.breakdown { flex-direction: column; align-items: stretch; gap: 4px; }
@@ -3948,6 +4061,7 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
         .app-root { flex-direction: column; }
         .sidebar { display: none; }
         .mobile-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; background: var(--beige); border-bottom: 1px solid var(--line); }
+        .mobile-search { display: block; padding: 10px 20px; background: var(--beige); border-bottom: 1px solid var(--line); }
         .mobile-nav { display: ${mobileNavOpen ? 'flex' : 'none'}; flex-direction: column; background: var(--beige); border-bottom: 1px solid var(--line); }
         .mobile-nav .nav-item { padding: 14px 20px; border-top: 1px solid var(--line); }
         .main-area { padding: 24px 18px 120px; }
@@ -4321,10 +4435,18 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
           )}
           <div className="brand-sub">{store.loginTitle || '工作室後台'}</div>
         </div>
+        <GlobalCustomerSearch customers={data.customers} onSelect={openCustomer} />
         <ul className="nav-list">
-          {NAV.map((n) => (
-            <li key={n.id} className={'nav-item' + (view === n.id || (n.id === 'customers' && view === 'customerDetail') ? ' active' : '')} onClick={() => goto(n.id)}>
-              <n.icon size={15} /> {n.label}
+          {NAV_GROUPS.map((g, gi) => (
+            <li key={g.label} className={'nav-group' + (gi > 0 ? ' with-divider' : '')}>
+              <div className="nav-group-label">{g.label}</div>
+              <ul className="nav-group-items">
+                {g.items.map((n) => (
+                  <li key={n.id} className={'nav-item' + (view === n.id || (n.id === 'customers' && view === 'customerDetail') ? ' active' : '')} onClick={() => goto(n.id)}>
+                    <n.icon size={15} /> {n.label}
+                  </li>
+                ))}
+              </ul>
             </li>
           ))}
         </ul>
@@ -4340,10 +4462,20 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
           )}
           <button className="icon-btn" onClick={() => setMobileNavOpen((v) => !v)}><Menu size={20} /></button>
         </div>
+        <div className="mobile-search">
+          <GlobalCustomerSearch customers={data.customers} onSelect={openCustomer} className="no-margin" />
+        </div>
         <ul className="nav-list mobile-nav">
-          {NAV.map((n) => (
-            <li key={n.id} className={'nav-item' + (view === n.id ? ' active' : '')} onClick={() => goto(n.id)}>
-              <n.icon size={15} /> {n.label}
+          {NAV_GROUPS.map((g, gi) => (
+            <li key={g.label} className={'nav-group' + (gi > 0 ? ' with-divider' : '')}>
+              <div className="nav-group-label">{g.label}</div>
+              <ul className="nav-group-items">
+                {g.items.map((n) => (
+                  <li key={n.id} className={'nav-item' + (view === n.id ? ' active' : '')} onClick={() => goto(n.id)}>
+                    <n.icon size={15} /> {n.label}
+                  </li>
+                ))}
+              </ul>
             </li>
           ))}
           <li className="nav-item" onClick={onLogout}>鎖定</li>
@@ -4353,7 +4485,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
           <BrowserModeWarning />
           <BackupReminder data={data} onGoBackup={() => goto('settings')} />
 
-          {view === 'dashboard' && <Dashboard data={data} store={store} />}
+          {view === 'dashboard' && <Dashboard data={data} store={store} onGoto={goto} />}
 
           {view === 'customers' && (
             <CustomersView
