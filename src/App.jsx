@@ -1788,28 +1788,55 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
         </div>
       </div>
 
-      <div className="kpi-grid narrow">
-        <KpiCard label="首次消費日期" value={fmtDate(s.first ? s.first.date : customer.firstVisitDate)} />
-        <KpiCard label="近期消費日期" value={s.last ? fmtDate(s.last.date) : '—'} />
-        <KpiCard label="生日" value={customer.birthday ? fmtDate(customer.birthday) : '未填寫'} />
-        <KpiCard label="累積消費" value={fmtMoney(s.total)} />
-        <KpiCard
-          label="儲值餘額"
-          value={fmtMoney(customer.storedValueBalance)}
-          sub={
-            <>
-              {storedValueUsedTotal > 0 && <span>目前紀錄裡共扣過 {fmtMoney(storedValueUsedTotal)}　</span>}
-              <button type="button" className="text-link" onClick={() => setShowAdjustBalance(true)}>調整餘額</button>
-            </>
-          }
-        />
-        <KpiCard label="消費次數" value={s.count} />
-        <KpiCard label="平均客單價" value={fmtMoney(s.count ? s.total / s.count : 0)} />
-        <KpiCard
-          label="回訪狀態"
-          value={retentionNote ? (retentionNote.overdue ? '🔔 建議回訪' : '穩定回訪中') : '尚無足夠資料'}
-          sub={retentionNote ? `平均每 ${retentionNote.avgGap} 天回訪，預估下次 ${fmtDate(retentionNote.predicted)}` : null}
-        />
+      <div className="member-card">
+        <div className="member-card-header">
+          <div>
+            <div className="member-card-label">會員卡　・　{store.name}</div>
+            <div className="member-card-name">
+              {customer.name}
+              {isBirthdayThisMonth(customer.birthday) && <span className="member-card-birthday">🎂 本月壽星</span>}
+            </div>
+            <div className="member-card-sub">No.{customer.memberNo}　{customer.phone}{customer.lineId ? ` ・ LINE ${customer.lineId}` : ''}</div>
+          </div>
+          <span className="member-card-type">{s.count > 1 ? '舊客' : '新客'}</span>
+        </div>
+        <div className="member-card-stats">
+          <div className="member-stat">
+            <span className="member-stat-label">首次消費日期</span>
+            <span className="member-stat-value">{fmtDate(s.first ? s.first.date : customer.firstVisitDate)}</span>
+          </div>
+          <div className="member-stat">
+            <span className="member-stat-label">近期消費日期</span>
+            <span className="member-stat-value">{s.last ? fmtDate(s.last.date) : '—'}</span>
+          </div>
+          <div className="member-stat">
+            <span className="member-stat-label">生日</span>
+            <span className="member-stat-value">{customer.birthday ? fmtDate(customer.birthday) : '未填寫'}</span>
+          </div>
+          <div className="member-stat">
+            <span className="member-stat-label">累積消費</span>
+            <span className="member-stat-value">{fmtMoney(s.total)}</span>
+          </div>
+          <div className="member-stat">
+            <span className="member-stat-label">儲值餘額</span>
+            <span className="member-stat-value">{fmtMoney(customer.storedValueBalance)}</span>
+            {storedValueUsedTotal > 0 && <span className="member-stat-note">共扣過 {fmtMoney(storedValueUsedTotal)}</span>}
+            <button type="button" className="text-link member-stat-action" onClick={() => setShowAdjustBalance(true)}>調整餘額</button>
+          </div>
+          <div className="member-stat">
+            <span className="member-stat-label">消費次數</span>
+            <span className="member-stat-value">{s.count}</span>
+          </div>
+          <div className="member-stat">
+            <span className="member-stat-label">平均客單價</span>
+            <span className="member-stat-value">{fmtMoney(s.count ? s.total / s.count : 0)}</span>
+          </div>
+          <div className="member-stat">
+            <span className="member-stat-label">回訪狀態</span>
+            <span className="member-stat-value">{retentionNote ? (retentionNote.overdue ? '🔔 建議回訪' : '穩定回訪中') : '尚無足夠資料'}</span>
+            {retentionNote && <span className="member-stat-note">平均每 {retentionNote.avgGap} 天回訪，預估下次 {fmtDate(retentionNote.predicted)}</span>}
+          </div>
+        </div>
       </div>
 
       <div className="panel notes-panel">
@@ -4073,6 +4100,43 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
       .category-summary-card:hover { border-color: var(--rose); }
       .category-summary-card.active { border-color: var(--rose); box-shadow: 0 0 0 1px var(--rose); }
       .kpi-value.small { font-family: 'Noto Serif TC', serif; font-size: 17px; font-weight: 600; }
+      .member-card {
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        box-shadow: 0 8px 24px rgba(74, 59, 52, 0.12);
+        margin-bottom: 28px;
+        background: var(--white);
+      }
+      .member-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        flex-wrap: wrap;
+        padding: 22px 26px;
+        background: linear-gradient(135deg, var(--rose-deep), var(--brown));
+        color: #fff;
+      }
+      .member-card-label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.8; margin-bottom: 8px; }
+      .member-card-name { font-family: 'Noto Serif TC', serif; font-size: 22px; font-weight: 600; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .member-card-birthday { font-size: 12px; font-weight: 400; background: rgba(255,255,255,0.22); border-radius: 20px; padding: 3px 10px; }
+      .member-card-sub { font-size: 13px; opacity: 0.88; margin-top: 8px; }
+      .member-card-type { font-size: 12px; padding: 6px 14px; border-radius: 20px; background: rgba(255,255,255,0.22); white-space: nowrap; }
+      .member-card-stats { display: grid; grid-template-columns: repeat(4, 1fr); }
+      .member-stat {
+        padding: 16px 20px;
+        border-top: 1px solid var(--line);
+        border-right: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .member-stat:nth-child(4n) { border-right: none; }
+      .member-stat-label { font-size: 12px; color: var(--taupe); }
+      .member-stat-value { font-family: 'Noto Serif TC', serif; font-size: 18px; font-weight: 600; color: var(--brown); }
+      .member-stat-note { font-size: 11px; color: var(--taupe); }
+      .member-stat-action { align-self: flex-start; font-size: 12px; margin-top: 2px; }
       .todo-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
       .todo-card {
         display: flex; align-items: center; gap: 10px;
@@ -4297,6 +4361,9 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
         .mobile-nav .nav-item { padding: 14px 20px; border-top: 1px solid var(--line); }
         .main-area { padding: 24px 18px 120px; }
         .kpi-grid, .kpi-grid.narrow { grid-template-columns: 1fr 1fr; }
+        .member-card-stats { grid-template-columns: 1fr 1fr; }
+        .member-stat:nth-child(4n) { border-right: 1px solid var(--line); }
+        .member-stat:nth-child(2n) { border-right: none; }
         .chart-grid { grid-template-columns: 1fr; }
         .category-summary-grid { grid-template-columns: 1fr 1fr; }
         .compare-table { font-size: 12px; }
