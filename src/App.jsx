@@ -794,6 +794,24 @@ function sessionTopUpInfo(record) {
     ? record.sessionTopUp
     : null;
 }
+// 付款狀態是「使用儲值扣款」或「使用堂數折抵」的話，額外加註客人「目前」餘額／剩餘堂數，
+// 還有堂數折抵是折了哪個項目，不用再手動去對客戶資料才知道扣完還剩多少。這裡顯示的是
+// 查看當下的最新數字，不是這筆紀錄發生那個當下的歷史餘額——如果之後客人還有其他消費或
+// 儲值，數字會跟著變動反映最新狀態。故意不做成每筆紀錄都存一份當時的歷史餘額快照，
+// 那樣遇到店家回頭編輯更早之前的紀錄時，後面所有紀錄的快照都要跟著重算，容易出錯、
+// 也違背「系統不要太複雜」的原則。
+function paymentStatusDetail(record, customer) {
+  if (!record.paymentStatus) return '';
+  let detail = paymentStatusLabel(record.paymentStatus);
+  if (record.paymentStatus === 'stored_value' && customer) {
+    detail += `，目前餘額 ${fmtMoney(customer.storedValueBalance)}`;
+  }
+  if (record.paymentStatus === 'session_package' && customer && record.serviceId) {
+    const remaining = Number((customer.sessionBalances || {})[record.serviceId]) || 0;
+    detail += `，折抵「${record.serviceName}」，目前剩餘 ${remaining} 堂`;
+  }
+  return `（${detail}）`;
+}
 
 function computeCoreStats(data, range) {
   const { records, expenses } = data;
@@ -1900,12 +1918,27 @@ function CustomerDetail({ data, store, customerId, onBack, onAddRecord, onEditRe
                   </div>
                 )}
                 <div className="muted small">
-                  付款：{r.paymentMethod}{r.paymentStatus ? `（${paymentStatusLabel(r.paymentStatus)}）` : ''}
+                  付款：{r.paymentMethod}{paymentStatusDetail(r, customer)}
                   {r.discount ? ` ・ 服務折扣：${fmtMoney(r.discount)}（原價 ${fmtMoney(r.listPrice)}）` : ''}
                   {r.staffId ? ` ・ 服務老師：${(store.staff || []).find((s) => s.id === r.staffId)?.name || '（已刪除）'}` : ''}
                   {r.source ? ` ・ 來源：${r.source}` : ''}
                   {r.notes ? ` ・ 備註：${r.notes}` : ''}
                 </div>
+                {(r.storedValueTopUp > 0 || r.sessionTopUp) && (
+                  <div className="muted small">
+                    {r.storedValueTopUp > 0 && (
+                      <span>這筆順便儲值了 {fmtMoney(r.storedValueTopUp)}（目前餘額 {fmtMoney(customer.storedValueBalance)}）</span>
+                    )}
+                    {r.storedValueTopUp > 0 && r.sessionTopUp && <span>　・　</span>}
+                    {r.sessionTopUp && (
+                      <span>
+                        這筆順便買了堂數：{r.sessionTopUp.serviceName} +{r.sessionTopUp.count} 堂
+                        {r.sessionTopUp.amount > 0 ? `（收費 ${fmtMoney(r.sessionTopUp.amount)}）` : ''}
+                        ，目前剩餘 {Number((customer.sessionBalances || {})[r.sessionTopUp.serviceId]) || 0} 堂
+                      </span>
+                    )}
+                  </div>
+                )}
                 {r.history && r.history.length > 0 && (
                   <button type="button" className="text-link" style={{ marginTop: 4, fontSize: 12 }} onClick={() => setViewHistoryRecord(r)}>
                     <History size={12} style={{ verticalAlign: -2, marginRight: 3 }} />查看修改紀錄（{r.history.length}）
