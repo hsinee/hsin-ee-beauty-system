@@ -3970,9 +3970,22 @@ function GlobalCustomerSearch({ customers, onSelect, className }) {
   );
 }
 
+// 把品牌色調暗一個程度，用來組成「同一個顏色、深淺兩階」的漸層（例如會員卡卡面），
+// 不管店家設定的品牌色是什麼顏色，漸層都會自動跟著配出協調的深色，不會固定配一個
+// 寫死的咖啡色、導致店家選了藍色/綠色品牌色時卡面顏色對不起來。
+function darkenHex(hex, amount = 0.4) {
+  const h = (hex || '').replace('#', '');
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return hex;
+  const channels = [h.slice(0, 2), h.slice(2, 4), h.slice(4, 6)]
+    .map((c) => Math.round(parseInt(c, 16) * (1 - amount)))
+    .map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0'));
+  return `#${channels.join('')}`;
+}
+
 function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
   const rose = primaryColor || '#c58f82';
   const cream = backgroundColor || '#f1ebe5';
+  const roseDark = darkenHex(rose, 0.42);
   return (
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;500;600;700&family=Noto+Sans+TC:wght@300;400;500;600;700&display=swap');
@@ -3982,6 +3995,7 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
         --beige: ${cream};
         --rose: ${rose};
         --rose-deep: ${rose};
+        --rose-dark: ${roseDark};
         --brown: #4a3b34;
         --taupe: #8f8178;
         --line: #ded4cc;
@@ -4115,7 +4129,7 @@ function GlobalStyles({ mobileNavOpen, primaryColor, backgroundColor }) {
         gap: 16px;
         flex-wrap: wrap;
         padding: 22px 26px;
-        background: linear-gradient(135deg, var(--rose-deep), var(--brown));
+        background: linear-gradient(135deg, var(--rose-deep), var(--rose-dark));
         color: #fff;
       }
       .member-card-label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.8; margin-bottom: 8px; }
