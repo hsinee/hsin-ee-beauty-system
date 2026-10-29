@@ -764,7 +764,9 @@ function extraServicesTotal(record) {
 // 原始金額，只有「總額」這種彙總數字才會變成 0。
 function recordTotal(record) {
   if (record.status === 'cancelled') return 0;
-  return Number(record.amount || 0) + extraServicesTotal(record) + addonsTotal(record) + productsTotal(record);
+  const sessionTopUp = sessionTopUpInfo(record);
+  return Number(record.amount || 0) + extraServicesTotal(record) + addonsTotal(record) + productsTotal(record)
+    + storedValueTopUpAmount(record) + (sessionTopUp ? Number(sessionTopUp.amount || 0) : 0);
 }
 // 這筆紀錄目前實際從客人儲值餘額扣了多少錢（沒有用儲值扣款就是 0）。
 // 新增/編輯/刪除紀錄時都要用「新舊差額」去調整餘額，不能每次都整筆再扣一次，
@@ -778,6 +780,18 @@ function storedValueImpact(record) {
 function sessionPackageUsage(record) {
   return record && record.paymentStatus === 'session_package' && record.serviceId
     ? { serviceId: record.serviceId, count: 1 }
+    : null;
+}
+// 這筆紀錄如果有「順便幫客人儲值」，這次實際收了多少錢（已取消就當作 0，跟其他營收
+// 欄位邏輯一致——客人沒有真的來，這筆儲值也沒有真的發生）。
+function storedValueTopUpAmount(record) {
+  return record && record.status !== 'cancelled' ? Number(record.storedValueTopUp || 0) : 0;
+}
+// 這筆紀錄如果有「順便幫客人加堂數」（買一組新的堂數方案），回傳加了哪個項目、
+// 加了幾堂、收了多少錢；已取消就回傳 null，跟上面儲值的邏輯一致。
+function sessionTopUpInfo(record) {
+  return record && record.status !== 'cancelled' && record.sessionTopUp && record.sessionTopUp.serviceId
+    ? record.sessionTopUp
     : null;
 }
 
@@ -965,6 +979,8 @@ function Dashboard({ data, store, onGoto }) {
     const serviceMap = {};
     let addonRevenue = 0;
     let productRevenue = 0;
+    let storedValueTopUpRevenue = 0;
+    let sessionTopUpRevenue = 0;
     inRange.forEach((r) => {
       if (r.status === 'cancelled') return; // 已取消不算營收，跟 recordTotal 的邏輯一致，不然這張表加起來會跟上面的「期間營收」對不起來
       serviceMap[r.serviceName] = (serviceMap[r.serviceName] || 0) + Number(r.amount || 0);
@@ -973,9 +989,13 @@ function Dashboard({ data, store, onGoto }) {
       });
       addonRevenue += addonsTotal(r);
       productRevenue += productsTotal(r);
+      storedValueTopUpRevenue += storedValueTopUpAmount(r);
+      sessionTopUpRevenue += Number(r.sessionTopUp?.amount || 0);
     });
     if (addonRevenue > 0) serviceMap['加購'] = addonRevenue;
     if (productRevenue > 0) serviceMap['產品銷售'] = productRevenue;
+    if (storedValueTopUpRevenue > 0) serviceMap['儲值加值'] = storedValueTopUpRevenue;
+    if (sessionTopUpRevenue > 0) serviceMap['堂數加購'] = sessionTopUpRevenue;
     const serviceRevenue = Object.entries(serviceMap)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8)
@@ -2581,6 +2601,16 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const [extraOpen, setExtraOpen] = useState(() => (record?.extraServices || []).length > 0);
   const [productsOpen, setProductsOpen] = useState(() => (record?.products || []).length > 0);
   const [addonsOpen, setAddonsOpen] = useState(() => (record?.addons || []).length > 0);
+  // 「順便儲值」「順便加堂數」：客人今天來做服務的同時，直接在這張表單裡幫他加值／
+  // 買新的堂數方案，不用另外跳去「編輯客戶」才能處理。兩個互相獨立，可以都不用、
+  // 只用一個，或兩個都用。
+  const [topUpOpen, setTopUpOpen] = useState(() => !!(record?.storedValueTopUp || record?.sessionTopUp));
+  const [storedValueTopUpEnabled, setStoredValueTopUpEnabled] = useState(() => !!record?.storedValueTopUp);
+  const [storedValueTopUpAmountInput, setStoredValueTopUpAmountInput] = useState(() => record?.storedValueTopUp ? String(record.storedValueTopUp) : '');
+  const [sessionTopUpEnabled, setSessionTopUpEnabled] = useState(() => !!record?.sessionTopUp);
+  const [sessionTopUpServiceId, setSessionTopUpServiceId] = useState(() => record?.sessionTopUp?.serviceId || '');
+  const [sessionTopUpCount, setSessionTopUpCount] = useState(() => record?.sessionTopUp?.count ? String(record.sessionTopUp.count) : '');
+  const [sessionTopUpAmountInput, setSessionTopUpAmountInput] = useState(() => record?.sessionTopUp?.amount ? String(record.sessionTopUp.amount) : '');
   const [hasProductDiscount, setHasProductDiscount] = useState(record ? !!record.productDiscount : false);
   const [productDiscountAmount, setProductDiscountAmount] = useState(record && record.productDiscount ? String(record.productDiscount) : '');
   const [depositAmount, setDepositAmount] = useState(record && record.depositAmount ? String(record.depositAmount) : '');
@@ -2722,12 +2752,30 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
   const productsFinal = Math.max(0, productsSum - productDiscountApplied);
   const grandTotal = finalAmount + productsFinal + addonSum + extraServicesFinal;
 
+  // 「順便儲值」「順便加堂數」是否真的有效（勾了但沒填完就不算），用來決定能不能送出、
+  // 送出時實際要存多少金額／堂數。這裡故意不跟上面服務本身的 grandTotal 混在一起算，
+  // 因為「使用儲值扣款」那個提示還要用純粹服務消費的 grandTotal 去算「扣款後剩多少」，
+  // 混進儲值加值金額的話那個提示會算錯。
+  const storedValueTopUpValid = storedValueTopUpEnabled && Number(storedValueTopUpAmountInput) > 0;
+  const sessionTopUpValid = sessionTopUpEnabled && !!sessionTopUpServiceId && Number(sessionTopUpCount) > 0;
+  const storedValueTopUpAmountFinal = storedValueTopUpValid ? Number(storedValueTopUpAmountInput) : 0;
+  const sessionTopUpAmountFinal = sessionTopUpValid ? Number(sessionTopUpAmountInput || 0) : 0;
+  const hasValidTopUp = storedValueTopUpValid || sessionTopUpValid;
+  const hasIncompleteTopUp = (storedValueTopUpEnabled && !storedValueTopUpValid) || (sessionTopUpEnabled && !sessionTopUpValid);
+  const totalWithTopUps = grandTotal + storedValueTopUpAmountFinal + sessionTopUpAmountFinal;
+
   // 完成簽名不擋送出：可以先把預約/服務資料存起來，客人到店再回來補簽名，
   // 不用逼店家一定要簽完名才能存檔。
   const needsCompletionSignatureButNotYet = needsCompletionSignature && !completionSignature;
   // 有服務老師名單的店家，編輯既有紀錄時要先確認「這次是誰在改」，存進修改歷程方便對業績帳。
   const requiresOperatorConfirm = isEditing && activeStaff.length > 0;
-  const canSubmit = customerId && (serviceId ? listPrice !== '' : selectedProducts.length > 0) && !hasIncompleteExtraService && (!requiresOperatorConfirm || !!operatorId);
+  // 服務／產品至少要有一邊，或者這次單純只是順便儲值／加堂數（客人沒有真的做服務，
+  // 只是來儲值），三者只要滿足一種就可以送出。
+  const canSubmit = customerId
+    && ((serviceId ? listPrice !== '' : selectedProducts.length > 0) || hasValidTopUp)
+    && !hasIncompleteExtraService
+    && !hasIncompleteTopUp
+    && (!requiresOperatorConfirm || !!operatorId);
 
   // 用來記錄「編輯紀錄」時哪些關鍵欄位被改了，給老闆事後對業績帳、抓有沒有人動過紀錄用。
   const HISTORY_FIELDS = [
@@ -2766,7 +2814,7 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       date,
       time,
       serviceId,
-      serviceName: selectedService ? selectedService.name : '（僅購買產品）',
+      serviceName: selectedService ? selectedService.name : (selectedProducts.length > 0 ? '（僅購買產品）' : '（儲值／堂數加值）'),
       listPrice: serviceId ? Number(listPrice) : 0,
       priceTier,
       discount: discountApplied,
@@ -2787,6 +2835,13 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
       notes: notes.trim(),
       reminderSent: isEditing ? (record.reminderSent || false) : false,
       completionSignature: completionSignature || '',
+      storedValueTopUp: storedValueTopUpAmountFinal,
+      sessionTopUp: sessionTopUpValid ? {
+        serviceId: sessionTopUpServiceId,
+        serviceName: activeServices.find((s) => s.id === sessionTopUpServiceId)?.name || '',
+        count: Number(sessionTopUpCount),
+        amount: sessionTopUpAmountFinal,
+      } : null,
       history: record ? (record.history || []) : [],
     };
 
@@ -3087,12 +3142,71 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
         )}
       </CollapsibleSection>
 
+      <CollapsibleSection
+        title="儲值 / 堂數加值（選填）"
+        summary={
+          [
+            storedValueTopUpValid ? `儲值 ${fmtMoney(storedValueTopUpAmountFinal)}` : null,
+            sessionTopUpValid ? `堂數 +${sessionTopUpCount}` : null,
+          ].filter(Boolean).join('、') || undefined
+        }
+        open={topUpOpen}
+        onToggle={() => setTopUpOpen((v) => !v)}
+      >
+        <p className="muted small" style={{ marginTop: -4 }}>
+          客人今天除了消費，如果也順便儲值、或買一組新的堂數方案，可以直接在這裡記錄金額／堂數，不用另外跳去「編輯客戶」處理
+        </p>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={storedValueTopUpEnabled} onChange={(e) => setStoredValueTopUpEnabled(e.target.checked)} />
+          這次順便幫客人儲值
+        </label>
+        {storedValueTopUpEnabled && (
+          <Field
+            label="儲值金額"
+            hint={chosenCustomer ? `目前餘額 ${fmtMoney(chosenCustomer.storedValueBalance)}，儲值後變成 ${fmtMoney((Number(chosenCustomer.storedValueBalance) || 0) + storedValueTopUpAmountFinal)}` : undefined}
+          >
+            <input type="number" value={storedValueTopUpAmountInput} onChange={(e) => setStoredValueTopUpAmountInput(e.target.value)} placeholder="0" />
+          </Field>
+        )}
+
+        <label className="checkbox-row">
+          <input type="checkbox" checked={sessionTopUpEnabled} onChange={(e) => setSessionTopUpEnabled(e.target.checked)} />
+          這次順便幫客人買堂數方案
+        </label>
+        {sessionTopUpEnabled && (
+          <>
+            <div className="product-row" style={{ flexWrap: 'wrap' }}>
+              <select value={sessionTopUpServiceId} onChange={(e) => setSessionTopUpServiceId(e.target.value)} style={{ flex: '1 1 160px', minWidth: 0 }}>
+                <option value="">請選擇服務項目</option>
+                {renderServiceOptions(activeServices)}
+              </select>
+              <input type="number" value={sessionTopUpCount} onChange={(e) => setSessionTopUpCount(e.target.value)} placeholder="堂數" style={{ width: 90, minWidth: 0 }} />
+              <input type="number" value={sessionTopUpAmountInput} onChange={(e) => setSessionTopUpAmountInput(e.target.value)} placeholder="收費金額（選填）" style={{ width: 130, minWidth: 0 }} />
+            </div>
+            {sessionTopUpServiceId && chosenCustomer && (
+              <p className="muted small">
+                「{activeServices.find((s) => s.id === sessionTopUpServiceId)?.name}」目前剩餘 {Number((chosenCustomer.sessionBalances || {})[sessionTopUpServiceId]) || 0} 堂，
+                加值後變成 {(Number((chosenCustomer.sessionBalances || {})[sessionTopUpServiceId]) || 0) + (Number(sessionTopUpCount) || 0)} 堂
+              </p>
+            )}
+          </>
+        )}
+        {hasIncompleteTopUp && (
+          <p style={{ color: '#b56f65', fontSize: 13 }}>
+            {storedValueTopUpEnabled && !storedValueTopUpValid && '儲值金額要大於 0 才能送出。'}
+            {sessionTopUpEnabled && !sessionTopUpValid && '買堂數方案要選服務項目、堂數也要大於 0 才能送出。'}
+          </p>
+        )}
+      </CollapsibleSection>
+
       <div className="final-amount-row breakdown">
         <div className="final-amount-line"><span className="muted">服務金額</span><span>{fmtMoney(finalAmount)}</span></div>
         {extraServicesFinal > 0 && <div className="final-amount-line"><span className="muted">其他服務金額</span><span>{fmtMoney(extraServicesFinal)}</span></div>}
         {addonSum > 0 && <div className="final-amount-line"><span className="muted">加購金額</span><span>{fmtMoney(addonSum)}</span></div>}
         {productsSum > 0 && <div className="final-amount-line"><span className="muted">產品金額</span><span>{fmtMoney(productsFinal)}</span></div>}
-        <div className="final-amount-line total"><span className="strong">總金額</span><span className="strong">{fmtMoney(grandTotal)}</span></div>
+        {storedValueTopUpAmountFinal > 0 && <div className="final-amount-line"><span className="muted">儲值加值</span><span>{fmtMoney(storedValueTopUpAmountFinal)}</span></div>}
+        {sessionTopUpAmountFinal > 0 && <div className="final-amount-line"><span className="muted">堂數加購金額</span><span>{fmtMoney(sessionTopUpAmountFinal)}</span></div>}
+        <div className="final-amount-line total"><span className="strong">總金額</span><span className="strong">{fmtMoney(totalWithTopUps)}</span></div>
       </div>
 
       {isFirstTime && (
@@ -4291,45 +4405,48 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
     }
   };
 
-  // 依「新舊差額」調整客人儲值餘額，一次可以處理好幾筆紀錄（例如一次新增多項服務），
-  // 這樣才不會因為同一次操作裡改了好幾筆紀錄，後面的改動蓋掉前面的改動。
-  const applyStoredValueDelta = async (customerId, oldRecords, newRecords) => {
-    const delta = newRecords.reduce((s, r) => s + storedValueImpact(r), 0) - oldRecords.reduce((s, r) => s + storedValueImpact(r), 0);
-    if (delta === 0) return;
+  // 依「新舊差額」把一筆或多筆紀錄對客人「儲值餘額」「堂數方案」造成的所有異動
+  // （扣款消費、順便儲值、順便加堂數）一次算完、合併成一次客戶存檔。故意不拆成
+  // 兩次各自存儲值跟堂數：如果同一次操作裡儲值跟堂數都有變動，分開存的話，第二次
+  // 存檔會根據還沒套用第一次改動的舊客人物件去存，等於把第一次的改動蓋掉。
+  // 堂數方面，消費扣款只會動「本來就有設定過堂數」的項目（沒設定過的不會生出負數堂數），
+  // 但「順便加堂數」就是用來建立新堂數方案的管道，所以可以直接生出新的項目。
+  const applyCustomerBalanceDeltas = async (customerId, oldRecords, newRecords) => {
+    const storedValueDelta =
+      (newRecords.reduce((s, r) => s + storedValueTopUpAmount(r) - storedValueImpact(r), 0)) -
+      (oldRecords.reduce((s, r) => s + storedValueTopUpAmount(r) - storedValueImpact(r), 0));
+
+    const sessionDeltaMap = {};
+    const accumulateSessionChange = (records, sign) => {
+      records.forEach((r) => {
+        const usage = sessionPackageUsage(r);
+        if (usage) sessionDeltaMap[usage.serviceId] = (sessionDeltaMap[usage.serviceId] || 0) - sign * usage.count;
+        const topUp = sessionTopUpInfo(r);
+        if (topUp) sessionDeltaMap[topUp.serviceId] = (sessionDeltaMap[topUp.serviceId] || 0) + sign * Number(topUp.count || 0);
+      });
+    };
+    accumulateSessionChange(newRecords, 1);
+    accumulateSessionChange(oldRecords, -1);
+
+    if (storedValueDelta === 0 && Object.keys(sessionDeltaMap).length === 0) return;
+
     const customer = data.customers.find((c) => c.id === customerId);
     if (!customer) return;
+
+    const sessionBalances = { ...(customer.sessionBalances || {}) };
+    Object.entries(sessionDeltaMap).forEach(([serviceId, delta]) => {
+      if (!delta) return;
+      sessionBalances[serviceId] = Number(sessionBalances[serviceId] || 0) + delta;
+    });
+
     const updatedCustomer = await apiSaveCustomer(
-      { ...customer, storedValueBalance: (Number(customer.storedValueBalance) || 0) - delta },
+      {
+        ...customer,
+        storedValueBalance: (Number(customer.storedValueBalance) || 0) + storedValueDelta,
+        sessionBalances,
+      },
       store.id
     );
-    updateData((d) => { d.customers = d.customers.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)); });
-  };
-
-  // 依「新舊差額」調整客人堂數方案的剩餘堂數，邏輯跟 applyStockDelta 一樣用 deltaMap
-  // 依服務項目分開算，一次新增多項服務、或編輯/刪除紀錄都不會互相蓋掉。只調整客戶
-  // 本來就有設定堂數的項目，沒設定過的項目即使選了「使用堂數折抵」也不會生出負數堂數。
-  const applySessionBalanceDelta = async (customerId, oldRecords, newRecords) => {
-    const deltaMap = {};
-    oldRecords.forEach((r) => {
-      const u = sessionPackageUsage(r);
-      if (u) deltaMap[u.serviceId] = (deltaMap[u.serviceId] || 0) + u.count;
-    });
-    newRecords.forEach((r) => {
-      const u = sessionPackageUsage(r);
-      if (u) deltaMap[u.serviceId] = (deltaMap[u.serviceId] || 0) - u.count;
-    });
-    if (Object.keys(deltaMap).length === 0) return;
-    const customer = data.customers.find((c) => c.id === customerId);
-    if (!customer) return;
-    const sessionBalances = { ...(customer.sessionBalances || {}) };
-    let changed = false;
-    Object.entries(deltaMap).forEach(([serviceId, delta]) => {
-      if (!delta || sessionBalances[serviceId] === undefined) return;
-      sessionBalances[serviceId] = Number(sessionBalances[serviceId]) + delta;
-      changed = true;
-    });
-    if (!changed) return;
-    const updatedCustomer = await apiSaveCustomer({ ...customer, sessionBalances }, store.id);
     updateData((d) => { d.customers = d.customers.map((c) => (c.id === updatedCustomer.id ? updatedCustomer : c)); });
   };
 
@@ -4365,8 +4482,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       }
       const customerId = records[0]?.customerId;
       if (customerId) {
-        await applyStoredValueDelta(customerId, [], savedList);
-        await applySessionBalanceDelta(customerId, [], savedList);
+        await applyCustomerBalanceDeltas(customerId, [], savedList);
         await applyStockDelta([], savedList);
       }
       setAddRecordFor(null);
@@ -4380,8 +4496,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       const oldRecord = data.records.find((r) => r.id === record.id);
       const saved = await apiSaveRecord(record, store.id);
       updateData((d) => { d.records = d.records.map((r) => (r.id === saved.id ? saved : r)); });
-      await applyStoredValueDelta(saved.customerId, oldRecord ? [oldRecord] : [], [saved]);
-      await applySessionBalanceDelta(saved.customerId, oldRecord ? [oldRecord] : [], [saved]);
+      await applyCustomerBalanceDeltas(saved.customerId, oldRecord ? [oldRecord] : [], [saved]);
       await applyStockDelta(oldRecord ? [oldRecord] : [], [saved]);
       setEditingRecord(null);
     } catch (e) {
@@ -4395,8 +4510,7 @@ export default function StudioAdmin({ store, onStoreChange, onLogout }) {
       await apiDeleteRecord(id);
       updateData((d) => { d.records = d.records.filter((r) => r.id !== id); });
       if (record) {
-        await applyStoredValueDelta(record.customerId, [record], []);
-        await applySessionBalanceDelta(record.customerId, [record], []);
+        await applyCustomerBalanceDeltas(record.customerId, [record], []);
         await applyStockDelta([record], []);
       }
     } catch (e) {
