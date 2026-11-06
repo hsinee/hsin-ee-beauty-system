@@ -2500,26 +2500,25 @@ function SignaturePad({ initialValue, onChange }) {
   const drawingRef = useRef(false);
   const lastPosRef = useRef(null);
   const hasDrawnRef = useRef(false);
-  // 「清除重簽」旁邊就是簽名板，手滑很容易誤觸就把簽好的簽名整個清掉，
-  // 所以清除前一定要先跳出確認，避免不小心點一下就要重簽。
+  // 「清除重簽」緊貼著簽名畫布，不管是簽完名放開手指、還是在畫布上拖曳畫完
+  // 簽名，瀏覽器常常會補送一個「幽靈點擊」剛好打在這顆按鈕上，被誤判成店家
+  // 要清除剛簽好的簽名，立刻跳出確認視窗——這就是店家回報「手寫簽名就一直
+  // 跳出是否刪除」的原因。分辨真的點擊 vs 幽靈點擊：真的點這顆按鈕，一定會
+  // 先有一個對應的 pointerdown 事件（發生在這顆按鈕上）才會有 click；
+  // 幽靈點擊則完全沒有發生在這顆按鈕上的 pointerdown（不管是瀏覽器補送的、
+  // 還是畫布拖曳結束後觸發的），用這個當作唯一判斷依據最準確——曾經想過用
+  // click 事件的 detail 分辨，但實測發現畫布拖曳結束後補送的點擊，detail
+  // 也會是 0，跟鍵盤觸發的點擊沒辦法區分，不夠可靠，所以放棄這個方向，
+  // 單純只看「這顆按鈕本身有沒有被真的按下過」。
   const [confirmClear, setConfirmClear] = useState(false);
-  // 觸控裝置在畫布上簽完名之後，瀏覽器有時候會補送一個延遲的「幽靈點擊」，
-  // 剛好又落在「清除重簽」這個跟簽名板貼在一起的按鈕上，導致確認視窗關掉後
-  // 立刻又被那個幽靈點擊重新點開，看起來就像「按取消也沒反應」。這種幽靈點擊
-  // 的特徵是沒有真正的 pointerdown 在先（憑空冒出來的 click）；真人手指點擊
-  // 一定會先有 pointerdown。所以只在關閉確認視窗後的短暫時間內，擋掉「沒有
-  // 對應 pointerdown」的點擊，真的手滑再點一次的話還是能立刻重新打開。
-  const ignoreClearClickRef = useRef(false);
-  const lastClearPointerDownAtRef = useRef(0);
-  const armIgnoreClearClick = () => {
-    ignoreClearClickRef.current = true;
-    setTimeout(() => { ignoreClearClickRef.current = false; }, 400);
-  };
+  const realPointerDownRef = useRef(false);
   const handleClearPointerDown = () => {
-    lastClearPointerDownAtRef.current = Date.now();
+    realPointerDownRef.current = true;
   };
   const openConfirmClear = () => {
-    if (ignoreClearClickRef.current && Date.now() - lastClearPointerDownAtRef.current > 500) return;
+    const hasRealPointerDown = realPointerDownRef.current;
+    realPointerDownRef.current = false;
+    if (!hasRealPointerDown) return;
     setConfirmClear(true);
   };
 
@@ -2603,8 +2602,8 @@ function SignaturePad({ initialValue, onChange }) {
           title="清除簽名"
           message="確定要清除這個簽名，讓客人重簽嗎？清除後無法復原。"
           confirmLabel="確定清除"
-          onCancel={() => { setConfirmClear(false); armIgnoreClearClick(); }}
-          onConfirm={() => { clear(); setConfirmClear(false); armIgnoreClearClick(); }}
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={() => { clear(); setConfirmClear(false); }}
         />
       )}
     </div>
