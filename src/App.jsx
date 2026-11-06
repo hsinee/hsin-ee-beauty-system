@@ -2723,8 +2723,14 @@ function AddRecordModal({ data, store, prefillCustomerId, record, onClose, onSav
     setListPrice(val !== undefined && val !== null ? String(val) : '');
   }, [serviceId, priceTier]);
 
-  // 價格方案改變時，「加另一項服務」裡已經選好服務的那幾行也要跟著換價格
+  // 價格方案改變時，「加另一項服務」裡已經選好服務的那幾行也要跟著換價格；
+  // 編輯模式下第一次不能跑，不然會把存檔時已經手動改過的自訂金額蓋回服務預設價格。
+  const extraPriceAutoFillRef = useRef(!isEditing);
   useEffect(() => {
+    if (!extraPriceAutoFillRef.current) {
+      extraPriceAutoFillRef.current = true;
+      return;
+    }
     setExtraServices((prev) => prev.map((es) => {
       if (!es.serviceId) return es;
       const svc = activeServices.find((s) => s.id === es.serviceId);
