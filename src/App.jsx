@@ -1471,32 +1471,31 @@ function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCusto
         <input placeholder="搜尋姓名 / 電話 / 會員編號 / LINE" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
 
-      <div className="pill-group" style={{ marginBottom: 18 }}>
-        {CUSTOMER_QUICK_FILTERS.map((f) => (
-          <button
-            key={f.id}
-            type="button"
-            className={'pill' + (activeFilters.has(f.id) ? ' active' : '')}
-            onClick={() => toggleFilter(f.id)}
-          >{f.label}</button>
-        ))}
-        {activeFilters.size > 0 && (
-          <button type="button" className="text-link" onClick={() => setActiveFilters(new Set())}>清除篩選</button>
-        )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
+        <div className="pill-group" style={{ marginBottom: 0 }}>
+          {CUSTOMER_QUICK_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              className={'pill' + (activeFilters.has(f.id) ? ' active' : '')}
+              onClick={() => toggleFilter(f.id)}
+            >{f.label}</button>
+          ))}
+          {activeFilters.size > 0 && (
+            <button type="button" className="text-link" onClick={() => setActiveFilters(new Set())}>清除篩選</button>
+          )}
+        </div>
+        <button type="button" className={'pill' + (memberNoSort ? ' active' : '')} onClick={cycleMemberNoSort}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            {memberNoSort === 'asc' ? <ChevronUp size={14} /> : memberNoSort === 'desc' ? <ChevronDown size={14} /> : <ArrowUpDown size={14} />}
+            會員編號{memberNoSort === 'asc' ? '：小到大' : memberNoSort === 'desc' ? '：大到小' : '排序'}
+          </span>
+        </button>
       </div>
 
       {filtered.length === 0 ? (
         <EmptyHint text={data.customers.length === 0 ? '還沒有客戶資料，點右上角新增第一位客人' : '找不到符合的客戶'} />
       ) : (
-        <>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-            <button type="button" className={'pill' + (memberNoSort ? ' active' : '')} onClick={cycleMemberNoSort}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                {memberNoSort === 'asc' ? <ChevronUp size={14} /> : memberNoSort === 'desc' ? <ChevronDown size={14} /> : <ArrowUpDown size={14} />}
-                會員編號{memberNoSort === 'asc' ? '：小到大' : memberNoSort === 'desc' ? '：大到小' : '排序'}
-              </span>
-            </button>
-          </div>
           <div className="table-wrap">
           <table className="data-table">
             <thead>
@@ -1533,7 +1532,6 @@ function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCusto
             </tbody>
           </table>
           </div>
-        </>
       )}
     </div>
   );
