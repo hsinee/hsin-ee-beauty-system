@@ -1396,9 +1396,21 @@ const CUSTOMER_QUICK_FILTERS = [
   },
 ];
 
+// 會員編號排序：先比對編號裡的數字部分（W001 / W002 ... 這種格式），數字相同或抓不到數字再比字串，
+// 這樣編號位數不一致時（例如之後超過 999 位客人）排序還是正確的。
+function compareMemberNo(a, b) {
+  const na = parseInt((a || '').match(/\d+/)?.[0], 10);
+  const nb = parseInt((b || '').match(/\d+/)?.[0], 10);
+  if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) return na - nb;
+  return (a || '').localeCompare(b || '');
+}
+
 function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCustomer, onImportCustomers }) {
   const [q, setQ] = useState('');
   const [activeFilters, setActiveFilters] = useState(() => new Set());
+  // 會員編號排序：null 是預設（依最近服務日期排）、'asc' 編號小到大、'desc' 編號大到小
+  const [memberNoSort, setMemberNoSort] = useState(null);
+  const cycleMemberNoSort = () => setMemberNoSort((prev) => (prev === null ? 'asc' : prev === 'asc' ? 'desc' : null));
   const toggleFilter = (id) => {
     setActiveFilters((prev) => {
       const next = new Set(prev);
@@ -1423,12 +1435,18 @@ function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCusto
       const activeDefs = CUSTOMER_QUICK_FILTERS.filter((f) => activeFilters.has(f.id));
       mapped = mapped.filter(({ c, s }) => activeDefs.every((f) => f.test(c, s)));
     }
+    if (memberNoSort) {
+      return mapped.sort((a, b) => {
+        const cmp = compareMemberNo(a.c.memberNo, b.c.memberNo);
+        return memberNoSort === 'asc' ? cmp : -cmp;
+      });
+    }
     return mapped.sort((a, b) => {
       const da = a.s.last ? a.s.last.date : '';
       const db = b.s.last ? b.s.last.date : '';
       return da < db ? 1 : -1;
     });
-  }, [q, data.customers, data.records, activeFilters]);
+  }, [q, data.customers, data.records, activeFilters, memberNoSort]);
 
   return (
     <div>
@@ -1454,6 +1472,12 @@ function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCusto
       </div>
 
       <div className="pill-group" style={{ marginBottom: 18 }}>
+        <button type="button" className={'pill' + (memberNoSort ? ' active' : '')} onClick={cycleMemberNoSort}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            {memberNoSort === 'asc' ? <ChevronUp size={14} /> : memberNoSort === 'desc' ? <ChevronDown size={14} /> : <ArrowUpDown size={14} />}
+            會員編號{memberNoSort === 'asc' ? '：小到大' : memberNoSort === 'desc' ? '：大到小' : '排序'}
+          </span>
+        </button>
         {CUSTOMER_QUICK_FILTERS.map((f) => (
           <button
             key={f.id}
