@@ -1472,12 +1472,6 @@ function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCusto
       </div>
 
       <div className="pill-group" style={{ marginBottom: 18 }}>
-        <button type="button" className={'pill' + (memberNoSort ? ' active' : '')} onClick={cycleMemberNoSort}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            {memberNoSort === 'asc' ? <ChevronUp size={14} /> : memberNoSort === 'desc' ? <ChevronDown size={14} /> : <ArrowUpDown size={14} />}
-            會員編號{memberNoSort === 'asc' ? '：小到大' : memberNoSort === 'desc' ? '：大到小' : '排序'}
-          </span>
-        </button>
         {CUSTOMER_QUICK_FILTERS.map((f) => (
           <button
             key={f.id}
@@ -1494,7 +1488,16 @@ function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCusto
       {filtered.length === 0 ? (
         <EmptyHint text={data.customers.length === 0 ? '還沒有客戶資料，點右上角新增第一位客人' : '找不到符合的客戶'} />
       ) : (
-        <div className="table-wrap">
+        <>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+            <button type="button" className={'pill' + (memberNoSort ? ' active' : '')} onClick={cycleMemberNoSort}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                {memberNoSort === 'asc' ? <ChevronUp size={14} /> : memberNoSort === 'desc' ? <ChevronDown size={14} /> : <ArrowUpDown size={14} />}
+                會員編號{memberNoSort === 'asc' ? '：小到大' : memberNoSort === 'desc' ? '：大到小' : '排序'}
+              </span>
+            </button>
+          </div>
+          <div className="table-wrap">
           <table className="data-table">
             <thead>
               <tr>
@@ -1529,7 +1532,8 @@ function CustomersView({ data, store, onOpenCustomer, onAddCustomer, onEditCusto
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );
